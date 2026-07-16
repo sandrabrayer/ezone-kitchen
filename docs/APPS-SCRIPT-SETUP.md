@@ -57,13 +57,17 @@ Set these environment variables on the Railway service (see
 | -------------------- | ------------------------------------------------- |
 | `APPS_SCRIPT_URL`    | the `/exec` URL from step 4                        |
 | `APPS_SCRIPT_SECRET` | the same string as the `SHARED_SECRET` from step 3 |
-| `APP_PIN`            | the access code staff will type (≤ 6 digits)       |
+| `ADMIN_PIN`          | the admin access code (all houses + budget admin view) |
+| `COOK_PINS`          | optional JSON of per-house cook codes, `{"pin":"houseId"}` |
 | `SESSION_SECRET`     | a random string ≥ 32 chars                          |
 
 ## 6. Verify
 
-- Open the deployed app, log in with `APP_PIN`, and add a house. Then check the
+- Open the deployed app, log in with `ADMIN_PIN`, and add a house. Then check the
   Sheet — a `houses` tab (and others) should appear and fill in.
+- To give a cook access to that house: copy its house id from the admin
+  all-houses view, add `{"<cookPin>":"<houseId>"}` to `COOK_PINS`, redeploy, and
+  that cook code will open only that house.
 - Direct `GET` on the `/exec` URL returns `{"ok":true,"service":"ezone-kitchen",
   "note":"POST only"}` — that confirms it's live. All real calls are POST and go
   through the server.

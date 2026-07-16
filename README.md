@@ -95,8 +95,8 @@ Requires **Node ≥ 18**.
 
 ```bash
 npm install
-cp .env.example .env      # fill in APP_PIN, SESSION_SECRET, APPS_SCRIPT_URL, APPS_SCRIPT_SECRET
-npm test                  # 46 tests (domain math + HMAC auth + server)
+cp .env.example .env      # fill in ADMIN_PIN, COOK_PINS, SESSION_SECRET, APPS_SCRIPT_URL, APPS_SCRIPT_SECRET
+npm test                  # domain math + HMAC auth + server + cook scoping
 npm start                 # http://localhost:3000
 ```
 
@@ -109,7 +109,8 @@ deploy the Apps Script, then set the four variables.
 
 | Variable             | Purpose                                                        |
 | -------------------- | -------------------------------------------------------------- |
-| `APP_PIN`            | Access code kitchen staff / admins log in with (≤ 6 digits).   |
+| `ADMIN_PIN`          | Admin access code — all houses + the budget admin (all-houses) view. |
+| `COOK_PINS`          | JSON map of per-house cook codes, `{"pin":"houseId"}`. Each cook code opens only its own house. Optional. |
 | `SESSION_SECRET`     | HMAC key for session tokens (≥ 32 chars).                      |
 | `APPS_SCRIPT_URL`    | The Apps Script Web App `/exec` URL. Server-side only.         |
 | `APPS_SCRIPT_SECRET` | Shared secret matching the Apps Script `SHARED_SECRET` prop.   |
@@ -123,9 +124,9 @@ deploy the Apps Script, then set the four variables.
 ezone-kitchen/
 ├── server.js               # Express: static + /api/login + /api/sheets proxy
 ├── Procfile, railway.json  # Railway deploy config
-├── .env.example            # the four required env vars (no real values)
+├── .env.example            # required env vars incl. ADMIN_PIN / COOK_PINS (no real values)
 ├── lib/
-│   ├── auth.js             # HMAC session auth (server-only, never served)
+│   ├── auth.js             # HMAC session auth + role/house claims (server-only)
 │   └── kitchen-domain.js   # ⭐ shared pure domain logic (browser + tests)
 ├── public/                 # the vanilla frontend (no build step)
 │   ├── index.html          # RTL shell + login overlay

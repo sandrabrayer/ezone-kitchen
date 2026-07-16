@@ -7,6 +7,29 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Added — separate cook and admin PINs (PIN-gated, server-enforced roles)
+
+Replaced the single `APP_PIN` (and the client-side `cook`/`admin` view toggle,
+which was not a security boundary) with two role-bearing PINs. The role is now a
+signed claim in the session token, decided by the PIN, so a cook cannot
+self-promote by editing localStorage.
+
+- **`ADMIN_PIN`** → admin: all houses + the budget admin (all-houses) view.
+- **`COOK_PINS`** (JSON map `pin → houseId`) → cook: **own house only** — menu,
+  headcount, stock, shopping list, and that house's budget. No house switcher,
+  no add-house, no all-houses view.
+- **Token** now carries `kitchen:<role>:<houseId>:<exp>` (base64url payload +
+  HMAC); `verifyToken` returns `{ role, houseId }`. `lib/auth.js`.
+- **Server-side enforcement** in the `/api/sheets` proxy, not just UI: a cook's
+  request body is pinned to their `houseId` and their `load` response is filtered
+  to that one house, so no other house's data reaches their browser.
+- **Frontend**: role/house read from the token (removed the role dropdown and
+  `ezk_role`); the admin all-houses view shows each house id for `COOK_PINS`
+  mapping. Docs and `.env.example` updated.
+- **Tests**: updated `auth`/`server-auth` for the new token & login contract;
+  added `test/cook-scope.test.js` (mock upstream) proving cook `load` filtering
+  and write house-pinning.
+
 ### Changed — 0.2.0: rebuilt to the E-Zone ecosystem standard
 
 The initial 0.1 scaffold (React + Vite + TypeScript, localStorage) was replaced

@@ -36,13 +36,11 @@
       </div>
       <div class="spacer"></div>
       <div class="controls">
-        <label class="muted" for="houseSelect">בית:</label>
+        <label class="muted" id="houseLabel" for="houseSelect">בית:</label>
         <select id="houseSelect" aria-label="בחירת בית"></select>
+        <span id="houseName" class="house-name" hidden></span>
         <button id="addHouseBtn" class="ghost" title="הוסף בית" type="button">＋</button>
-        <select id="roleSelect" aria-label="תפקיד" title="תפקיד">
-          <option value="cook">טבח/ית</option>
-          <option value="admin">מנהל/ת</option>
-        </select>
+        <span id="roleBadge" class="role-badge" hidden></span>
         <button id="logoutBtn" class="ghost" title="התנתקות" type="button">יציאה</button>
       </div>
     </div>

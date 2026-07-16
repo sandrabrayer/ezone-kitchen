@@ -43,11 +43,14 @@ runtimes.
 
 ## Auth (HMAC session, ecosystem standard)
 
-- `POST /api/login` with the shared `APP_PIN` (timing-safe compare, per-IP rate
-  limited) returns a token `"<expiresAtMs>.<hmacSha256Hex>"` over the payload
-  `"kitchen:<expiresAtMs>"`, keyed by `SESSION_SECRET`.
+- `POST /api/login` with a PIN (timing-safe compare, per-IP rate limited)
+  returns a token `"<base64url(payload)>.<hmacSha256Hex>"` over the payload
+  `"kitchen:<role>:<houseId>:<expiresAtMs>"`, keyed by `SESSION_SECRET`. The PIN
+  decides the role: `ADMIN_PIN` → `admin` (no house); a `COOK_PINS` entry →
+  `cook` bound to that entry's house.
 - The token is sent as `Authorization: Bearer <token>` on `/api/sheets` and
-  verified server-side (`lib/auth.js`).
+  verified server-side (`lib/auth.js`), which returns the `{ role, houseId }`
+  claims the proxy enforces against.
 - The `kitchen:` payload prefix means a token minted by another E-Zone app is
   invalid here (and vice-versa) even if the same secret were reused.
 - `lib/auth.js` is **never** statically served; only `lib/kitchen-domain.js` is
@@ -55,12 +58,21 @@ runtimes.
 - A second secret, `APPS_SCRIPT_SECRET`, authenticates this server to the Apps
   Script (defence in depth: knowing the `/exec` URL is not enough to write).
 
-### Roles
+### Roles (PIN-gated, server-enforced)
 
-The `cook` / `admin` toggle is a client-side view convenience in v1 (admins get
-the all-houses tab). It is **not** a security boundary — everyone shares one
-`APP_PIN`. Real per-role auth (separate PINs or accounts + a role claim in the
-token) is the natural next step and fits this structure without data changes.
+The role is **not** a client toggle — it is a signed claim in the token, decided
+by which PIN was entered, so a cook cannot self-promote by editing localStorage:
+
+- **admin** (`ADMIN_PIN`): all houses, plus the budget admin (all-houses) view.
+- **cook** (a `COOK_PINS` entry): their **own house only** — menu, headcount,
+  stock, shopping list, and that house's budget. No house switcher, no add-house,
+  no all-houses view.
+
+`COOK_PINS` is a JSON map of `pin → houseId` (Railway env). Enforcement is
+server-side in the `/api/sheets` proxy, not just UI: a cook's request body has
+its house reference pinned to the token's `houseId`, and a cook's `load`
+response is filtered to that one house — so no other house's data ever reaches
+their browser even via a hand-crafted request.
 
 ## Persistence & concurrency
 

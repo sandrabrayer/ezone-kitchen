@@ -35,14 +35,19 @@ This PR targets `main`, so once merged, `main` is the deploy branch.
 
    | Variable             | Value                                              |
    | -------------------- | -------------------------------------------------- |
-   | `APP_PIN`            | staff access code (≤ 6 digits)                     |
+   | `ADMIN_PIN`          | admin access code — all houses + budget admin view |
+   | `COOK_PINS`          | JSON map of per-house cook codes, `{"pin":"houseId"}` (optional) |
    | `SESSION_SECRET`     | random string ≥ 32 chars                           |
    | `APPS_SCRIPT_URL`    | the Apps Script `/exec` URL                        |
    | `APPS_SCRIPT_SECRET` | same as the Apps Script `SHARED_SECRET` property   |
    | `SESSION_DAYS`       | optional, default 7                                |
 
-   The server **fails closed**: it refuses to start if any of the first four is
-   missing (or if `SESSION_SECRET` < 32 chars). That is intentional.
+   The server **fails closed**: it refuses to start if `ADMIN_PIN`,
+   `SESSION_SECRET`, `APPS_SCRIPT_URL`, or `APPS_SCRIPT_SECRET` is missing (or if
+   `SESSION_SECRET` < 32 chars). That is intentional. `COOK_PINS` is optional —
+   leave it empty until houses exist, then map each cook's PIN to a house id
+   (copy the id from the admin all-houses view). Each cook PIN must differ from
+   `ADMIN_PIN`.
 3. Deploy. Railway health-checks `GET /healthz`.
 4. Do the Google side once: [`APPS-SCRIPT-SETUP.md`](APPS-SCRIPT-SETUP.md).
 

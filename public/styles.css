@@ -70,6 +70,9 @@ input:focus, select:focus { outline: 2px solid var(--brand-tint); border-color: 
 .row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
 .between { justify-content: space-between; }
 .muted { color: var(--muted); font-size: 0.9rem; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.house-name { font-weight: 700; color: var(--brand); }
+.role-badge { padding: 0.15rem 0.6rem; border-radius: 999px; background: var(--brand-tint); color: var(--brand); font-size: 0.8rem; font-weight: 700; }
 .pill { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.15rem 0.6rem; border-radius: 999px; background: var(--brand-tint); color: var(--brand); font-size: 0.85rem; font-weight: 600; }
 
 /* Allergy banner */

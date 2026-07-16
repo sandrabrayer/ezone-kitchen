@@ -32,6 +32,23 @@ const TOKEN_KEY = 'ezk_session_token';
 function getToken() { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; } }
 function setToken(t) { try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); } catch { /* private mode */ } }
 
+/* The role and (for a cook) the house are read from the signed token, not from
+   any client-controlled setting — the server decided them from the PIN. The
+   payload is only base64url-encoded (not secret); the HMAC (dropped here) is
+   what makes it unforgeable, so the browser can safely read the claims. */
+function decodeToken(token) {
+  try {
+    const body = String(token || '').split('.')[0];
+    if (!body) return null;
+    let b64 = body.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    const payload = atob(b64); // "kitchen:<role>:<houseId>:<exp>"
+    const parts = payload.split(':');
+    if (parts.length !== 4 || parts[0] !== 'kitchen') return null;
+    return { role: parts[1], houseId: parts[2], expiresAt: Number(parts[3]) };
+  } catch { return null; }
+}
+
 /* ============================ API client ============================ */
 async function api(action, payload) {
   const token = getToken();
@@ -80,7 +97,8 @@ const persist = {
 const state = {
   houses: [],
   activeHouseId: null,
-  role: (() => { try { return localStorage.getItem('ezk_role') || 'cook'; } catch { return 'cook'; } })(),
+  role: 'cook',    // set from the session token in start()
+  myHouseId: '',   // for a cook: the one house this session is locked to
   currentWeekOf: KD.weekStart(new Date()),
   tab: 'menu',
   unitPref: {}, // transient per-ingredient display unit (id -> 'kg'|'g')
@@ -108,7 +126,13 @@ async function loadState() {
     h.weeks = h.weeks || {};
     if (typeof h.weeklyBudget !== 'number') h.weeklyBudget = 0;
   }
-  if (!state.activeHouseId && state.houses[0]) state.activeHouseId = state.houses[0].id;
+  // A cook is locked to their own house (the server returns only that house).
+  if (state.role === 'cook') {
+    const mine = state.houses.find((h) => h.id === state.myHouseId) || state.houses[0];
+    state.activeHouseId = mine ? mine.id : null;
+  } else if (!state.activeHouseId && state.houses[0]) {
+    state.activeHouseId = state.houses[0].id;
+  }
 }
 
 /* ============================ rendering ============================ */
@@ -121,22 +145,43 @@ const TABS = [
 ];
 
 function renderChrome() {
+  const isAdmin = state.role === 'admin';
   const houseSel = $('#houseSelect');
-  houseSel.innerHTML = state.houses.map((h) => `<option value="${esc(h.id)}">${esc(h.name)}</option>`).join('');
-  if (activeHouse()) houseSel.value = activeHouse().id;
-  $('#roleSelect').value = state.role;
+  const houseLabel = $('#houseLabel');
+  const houseName = $('#houseName');
+  const addBtn = $('#addHouseBtn');
+  const badge = $('#roleBadge');
 
-  const tabs = state.role === 'admin' ? TABS.concat([{ id: 'admin', label: '🏠 כל הבתים' }]) : TABS;
+  if (isAdmin) {
+    // Admin: switch across all houses, and may add houses.
+    houseSel.hidden = false; houseLabel.hidden = false; addBtn.hidden = false; houseName.hidden = true;
+    houseSel.innerHTML = state.houses.map((h) => `<option value="${esc(h.id)}">${esc(h.name)}</option>`).join('');
+    if (activeHouse()) houseSel.value = activeHouse().id;
+    badge.hidden = false; badge.textContent = 'מנהל/ת';
+  } else {
+    // Cook: locked to one house — no switcher, no add-house.
+    houseSel.hidden = true; houseLabel.hidden = true; addBtn.hidden = true;
+    const h = activeHouse();
+    houseName.hidden = false; houseName.textContent = h ? h.name : '';
+    badge.hidden = false; badge.textContent = 'טבח/ית';
+  }
+
+  // Only admin gets the all-houses view.
+  const tabs = isAdmin ? TABS.concat([{ id: 'admin', label: '🏠 כל הבתים' }]) : TABS;
   $('#tabs').innerHTML = tabs.map((t) =>
     `<button data-tab="${t.id}" role="tab" aria-current="${state.tab === t.id}">${esc(t.label)}</button>`).join('');
 }
 
 function render() {
+  // The admin-only view is never reachable as a cook, even via a stale tab.
+  if (state.role !== 'admin' && state.tab === 'admin') state.tab = 'menu';
   renderChrome();
   const screen = $('#screen');
   const house = activeHouse();
   if (!house) {
-    screen.innerHTML = `<div class="card">אין בתים עדיין. הוסיפו בית עם הכפתור ＋ למעלה כדי להתחיל.</div>`;
+    screen.innerHTML = state.role === 'admin'
+      ? `<div class="card">אין בתים עדיין. הוסיפו בית עם הכפתור ＋ למעלה כדי להתחיל.</div>`
+      : `<div class="card">הבית שלך עדיין לא הוגדר במערכת. פנו למנהל/ת.</div>`;
     return;
   }
   const map = { menu: renderMenu, headcount: renderHeadcount, stock: renderStock, shopping: renderShopping, budget: renderBudget, admin: renderAdmin };
@@ -414,7 +459,7 @@ function renderAdmin() {
     const people = (house.headcount.basePatients || 0) + (house.headcount.baseStaff || 0);
     tB += s.weeklyBudget; tE += s.estimated; tA += s.actual;
     return `<tr>
-      <td><strong>${esc(house.name)}</strong></td>
+      <td><strong>${esc(house.name)}</strong><div class="muted mono" style="font-size:.7rem">${esc(house.id)}</div></td>
       <td class="num">${people}</td>
       <td class="num">${fmtCurrency(s.weeklyBudget)}</td>
       <td class="num muted">${fmtCurrency(s.estimated)}</td>
@@ -427,6 +472,7 @@ function renderAdmin() {
   return `<div class="card">
     <h2>מבט מנהל — כל הבתים</h2>
     <p class="muted">שבוע ${esc(weekOf)}</p>
+    <p class="muted" style="font-size:.75rem">💡 המזהה שמתחת לשם הבית הוא ה־house id — השתמשו בו כדי לשייך קוד טבח/ית לבית ב־<code>COOK_PINS</code>.</p>
     <table>
       <thead><tr><th>בית</th><th>סועדים (בסיס)</th><th>תקציב</th><th>הערכה</th><th>בפועל</th><th>מול תקציב</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
@@ -576,12 +622,6 @@ function clampInt(v) { const n = parseInt(v, 10); return Number.isFinite(n) && n
 /* ============================ chrome events ============================ */
 function wireChrome() {
   $('#houseSelect').addEventListener('change', (e) => { state.activeHouseId = e.target.value; render(); });
-  $('#roleSelect').addEventListener('change', (e) => {
-    state.role = e.target.value;
-    try { localStorage.setItem('ezk_role', state.role); } catch { /* ignore */ }
-    if (state.role !== 'admin' && state.tab === 'admin') state.tab = 'menu';
-    render();
-  });
   $('#addHouseBtn').addEventListener('click', async () => {
     const name = window.prompt('שם הבית החדש:');
     if (!name) return;
@@ -627,6 +667,12 @@ async function submitLogin() {
 /* ============================ boot ============================ */
 async function start() {
   try {
+    // Role + house come from the signed token — the server set them from the PIN.
+    const claims = decodeToken(getToken());
+    if (!claims) { setToken(''); showLogin(); return; }
+    state.role = claims.role === 'admin' ? 'admin' : 'cook';
+    state.myHouseId = claims.houseId || '';
+    if (state.role !== 'admin' && state.tab === 'admin') state.tab = 'menu';
     setStatus('טוען נתונים…');
     await loadState();
     setStatus('');

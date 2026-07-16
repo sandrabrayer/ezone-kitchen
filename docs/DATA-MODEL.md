@@ -38,8 +38,9 @@ Dish       { id, name, ingredients: [ Ingredient ] }
 Ingredient { id, name, category, qtyKgPerPerson }   // per-person, kilograms
 ```
 
-`activeHouseId` and `role` are **client-side only** (localStorage) — they are UI
-state, not shared data.
+`activeHouseId` is **client-side only** UI state, not shared data. `role` and
+(for a cook) `houseId` are **not** client state — they are read from the signed
+session token, decided by the PIN at login and enforced server-side.
 
 ## Categories & units
 
