@@ -1,0 +1,16 @@
+{
+  "name": "ezone-kitchen",
+  "version": "0.2.0",
+  "description": "E-Zone kitchen — plan & budget weekly menus per house (menu, headcount, allergies, stock, shopping list, budget)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
