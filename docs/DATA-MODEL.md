@@ -1,94 +1,77 @@
 # Data model
 
-All types live in [`src/domain/types.ts`](../src/domain/types.ts). Everything is
-scoped to a **House**. Quantities are stored in **kilograms**.
+The source of truth is a **Google Sheet with one tab per entity**. The Apps
+Script (`apps-script/Code.gs`) reads/writes these tabs; `load` assembles them
+into the nested `AppState` the frontend uses.
 
-## Entities
+## Sheet tabs
 
-### AppState
-```
-schemaVersion  number
-houses         House[]
-activeHouseId  string | null
-role           'cook' | 'admin'
-```
+| Tab                | Columns (header row, in order)                      | Notes |
+| ------------------ | --------------------------------------------------- | ----- |
+| `houses`           | `id`, `name`                                        | One row per house. |
+| `budget`           | `houseId`, `weeklyBudget`                           | Weekly target per house. |
+| `headcount`        | `houseId`, `basePatients`, `baseStaff`, `overridesJson` | One row per house; overrides stored as JSON. |
+| `allergies`        | `id`, `houseId`, `name`, `count`                    | Many rows per house. |
+| `stock`            | `id`, `houseId`, `name`, `category`, `qtyKg`        | Many rows per house. Kilograms. |
+| `ingredientPrices` | `houseId`, `name`, `category`, `pricePerKg`, `updatedAt` | Price per kg + last-updated date. |
+| `menus`            | `houseId`, `weekOf`, `daysJson`                     | One row per (house, week); the week's nested days are JSON. |
+| `purchases`        | `id`, `houseId`, `weekOf`, `amount`, `note`, `date` | Actual logged spend. |
 
-### House
-```
-id           string
-name         string
-headcount    Headcount
-allergies    Allergy[]
-stock        StockItem[]
-weeks        Record<weekOf, WeekMenu>     // weekOf = the week's Sunday, YYYY-MM-DD
-weeklyBudget number                       // target, ILS
-prices       PriceEntry[]
-spendLog     SpendEntry[]
-```
+Tabs are created automatically with their header row on first write
+(`sheet_()` in `Code.gs`). Add columns by **appending** — the code maps by
+header name, but keeping existing columns in place avoids surprises.
 
-### Headcount
-```
-basePatients number
-baseStaff    number
-overrides    Partial<Record<DayKey, { patients?: number; staff?: number }>>
-```
-Effective people for a day = `(override.patients ?? basePatients) +
-(override.staff ?? baseStaff)`. An unset override field falls back to base; an
-empty override object is dropped. This shape is intentionally stable so a
-dashboard sync can fill base or overrides later without migration.
+## Assembled `AppState` (what `load` returns / the client holds)
 
-### WeekMenu
 ```
-weekOf string
-days   Record<DayKey, Record<Meal, Dish[]>>
-```
-`DayKey` = sunday…saturday (Israeli week starts Sunday). `Meal` = breakfast |
-lunch | dinner. A meal slot holds any number of dishes.
-
-### Dish / Ingredient
-```
-Dish        { id, name, ingredients: Ingredient[] }
-Ingredient  { id, name, category, qtyKgPerPerson }
-```
-No recipe bank: a dish is a free-text name plus its ingredient lines.
-`qtyKgPerPerson` is **per person** — the shopping list multiplies it by the
-day's headcount.
-
-### StockItem / PriceEntry / SpendEntry / Allergy
-```
-StockItem   { id, name, category, qtyKg }
-PriceEntry  { name, category, pricePerKg, updatedAt }   // last-updated shown in UI
-SpendEntry  { id, weekOf, amount, note?, date }
-Allergy     { id, name, count }
+House {
+  id, name,
+  weeklyBudget,                              // from `budget`
+  headcount { basePatients, baseStaff, overrides },  // overrides = { [day]: {patients?, staff?} }
+  allergies [ { id, name, count } ],
+  stock     [ { id, name, category, qtyKg } ],
+  prices    [ { name, category, pricePerKg, updatedAt } ],
+  purchases [ { id, weekOf, amount, note, date } ],
+  weeks     { [weekOf]: { weekOf, days } }   // days = { [day]: { breakfast:[Dish], lunch:[Dish], dinner:[Dish] } }
+}
+Dish       { id, name, ingredients: [ Ingredient ] }
+Ingredient { id, name, category, qtyKgPerPerson }   // per-person, kilograms
 ```
 
-### Category (fixed, closed set)
-`groceries | vegetables | fruits | meat | dry` — Hebrew labels: מכולת, ירקות,
-פירות, בשר, יבשים.
+`activeHouseId` and `role` are **client-side only** (localStorage) — they are UI
+state, not shared data.
+
+## Categories & units
+
+- `Category` is a closed set: `groceries | vegetables | fruits | meat | dry`
+  (Hebrew labels מכולת / ירקות / פירות / בשר / יבשים).
+- Everything is stored in **kilograms**. The UI accepts grams and converts on
+  input (`toKg`). There are no free-text units.
 
 ## Merge key
 
-Ingredients, stock and prices are matched on **(category, lower-cased trimmed
-name)** — see `ingredientKey()` in `aggregate.ts`. So `"Rice"` and `"rice"` in
-the same category merge, but the same name in two categories stays separate.
+Ingredients / stock / prices are matched on **(category, lower-cased trimmed
+name)** — `ingredientKey()` in `lib/kitchen-domain.js`. `"Rice"` and `"rice"` in
+the same category merge; the same name in two categories stays separate.
 
 ## Calculation flow
 
 ```
-WeekMenu + Headcount
+weeks[weekOf] + headcount
         │  aggregateWeek()   → Σ qtyKgPerPerson × people(day)   (per ingredient)
         ▼
-AggregatedLine[]
         │  applyBuffer(0.20)      → bufferedKg
         │  subtractStock(stock)   → toBuyKg = max(0, buffered − onHand)
         ▼
 ShoppingList (grouped by the 5 categories)
         │  estimateCost(prices)   → Σ toBuyKg × pricePerKg
         ▼
-BudgetEstimate + actualSpendForWeek() → summariseBudget()
++ actualSpendForWeek(purchases) → summariseBudget()   (estimate vs actual vs budget)
 ```
 
-## Versioning
+## Future dashboard sync
 
-`AppState.schemaVersion` (currently `1`) exists so a future migration can be
-applied on load in the storage adapter without guessing the shape.
+Headcount is `{ basePatients, baseStaff, overrides }`, where `overrides` is a
+partial per-day map. A future dashboard sync can populate the base numbers or
+per-day overrides through the same fields — no schema change — satisfying the
+"design so a dashboard sync can be added later" requirement.

@@ -1,62 +1,82 @@
 # Architecture
 
+ezone-kitchen follows the **E-Zone ecosystem standard** (same shape as
+`ezone-managers` / `ezone-staffing`): vanilla-JS frontend, Node/Express host
+with HMAC session auth, Google Apps Script + Google Sheets backend. **No build
+step.**
+
+## Data flow
+
+```
+Browser (public/)                     Node/Express (server.js)          Google
+──────────────────                    ────────────────────────         ────────
+login: POST /api/login {pin}  ──────▶ checkPin (timing-safe)
+                              ◀──────  { token }  (HMAC session)
+                                       │
+data: POST /api/sheets        ──────▶ requireAuth (verify Bearer token)
+      { action, ... } + Bearer         │  inject server-only shared secret
+                                       └────────▶ POST Apps Script /exec ──▶ doPost
+                                                   (verify SHARED_SECRET)     │
+                              ◀──────────────────  JSON  ◀───────────────────  Sheet tabs
+```
+
+Key property: the Apps Script `/exec` URL and all secrets are **server-side
+only**. The browser never sees them; it only ever holds a short-lived HMAC
+session token. This is why data can be shared across users/devices while the
+frontend stays a dumb static bundle.
+
 ## Layers
 
 ```
-components/  ─ React UI (RTL, Hebrew). Presentational + local edit state.
-state/       ─ AppContext: the single React store; persists via a StorageAdapter.
-lib/         ─ formatting + export helpers (currency, kg, WhatsApp, print).
-domain/      ─ pure business logic. NO React, NO storage, NO DOM. Unit tested.
-storage/     ─ StorageAdapter interface; LocalStorageAdapter is the v1 impl.
+public/app.js       vanilla views + state + API client + debounced saves
+public/index.html   RTL shell, login overlay
+lib/kitchen-domain.js  pure domain logic — UMD, shared by browser AND tests
+lib/auth.js         HMAC session auth — SERVER ONLY, never served over HTTP
+server.js           Express: static, /api/login, /api/sheets proxy, fail-closed
+apps-script/Code.gs Sheets CRUD, POST-only, shared-secret gated, LockService
 ```
 
-The dependency rule points inward: `components → state → domain`, and
-`state → storage`. **`domain/` depends on nothing** — that is what makes the
-calculations trivially testable and portable to a server.
+The dependency rule: `app.js → kitchen-domain.js`. The domain module depends on
+nothing (no DOM, no network), which is what makes the 20% buffer, aggregation,
+stock subtraction and budget math trivially testable and identical in both
+runtimes.
 
-## Why the domain layer is isolated
+## Auth (HMAC session, ecosystem standard)
 
-Every non-negotiable calculation (the 20% buffer, week aggregation, stock
-subtraction, budget math) is a small pure function in `src/domain/`. They take
-plain data and return plain data. The UI and storage are replaceable around
-them. The test suite exercises these functions directly, with no DOM or React.
+- `POST /api/login` with the shared `APP_PIN` (timing-safe compare, per-IP rate
+  limited) returns a token `"<expiresAtMs>.<hmacSha256Hex>"` over the payload
+  `"kitchen:<expiresAtMs>"`, keyed by `SESSION_SECRET`.
+- The token is sent as `Authorization: Bearer <token>` on `/api/sheets` and
+  verified server-side (`lib/auth.js`).
+- The `kitchen:` payload prefix means a token minted by another E-Zone app is
+  invalid here (and vice-versa) even if the same secret were reused.
+- `lib/auth.js` is **never** statically served; only `lib/kitchen-domain.js` is
+  exposed, via an explicit route.
+- A second secret, `APPS_SCRIPT_SECRET`, authenticates this server to the Apps
+  Script (defence in depth: knowing the `/exec` URL is not enough to write).
 
-## Storage abstraction — the path to a backend
+### Roles
 
-The whole app reads and writes state **only** through `StorageAdapter`:
+The `cook` / `admin` toggle is a client-side view convenience in v1 (admins get
+the all-houses tab). It is **not** a security boundary — everyone shares one
+`APP_PIN`. Real per-role auth (separate PINs or accounts + a role claim in the
+token) is the natural next step and fits this structure without data changes.
 
-```ts
-interface StorageAdapter {
-  load(): Promise<AppState | null>
-  save(state: AppState): Promise<void>
-}
-```
+## Persistence & concurrency
 
-v1 ships `LocalStorageAdapter` (browser localStorage). To make data shared
-across devices and give "admin view all houses" real teeth, add an
-`ApiStorageAdapter` that talks to a REST/DB backend and inject it into
-`<AppProvider adapter={...}>`. **No domain type changes are required** — the
-`AppState` shape is the contract, and it was designed up front to stay stable
-(e.g. headcount overrides are a partial map, allergies/stock/prices are simple
-arrays keyed by name+category).
+The frontend talks to a small persistence API (see `persist.*` in `app.js`),
+one **action per entity** so a write only ever touches one tab for one house:
+`saveHouse`, `saveHeadcount`, `saveAllergies`, `saveStock`, `savePrices`,
+`savePurchases`, `saveMenu`. Saves are **debounced** (700 ms) so rapid typing
+coalesces into one request. On the Apps Script side every write is wrapped in
+`LockService`, so concurrent cooks/admins can't corrupt a tab. Scoping writes
+per (house, entity) keeps last-writer-wins collisions small; finer-grained
+row/cell writes are a possible future optimization.
 
-Recommended next step for multi-user:
+## Frontend rendering
 
-1. Stand up a small API (Express/Fastify) on the existing `server.mjs` process,
-   under an `/api/*` prefix (Railway config stays the same).
-2. Move persistence to Postgres; keep the same entity shapes.
-3. Add auth + real `cook` / `admin` roles (the `role` field already exists).
-4. Swap `LocalStorageAdapter` → `ApiStorageAdapter`.
-
-## Headcount module & future dashboard sync
-
-`Headcount` is `{ basePatients, baseStaff, overrides }` where `overrides` is a
-partial per-day map. A future dashboard sync can populate the base numbers or
-per-day overrides through the same fields — no schema change — which satisfies
-the "design so a dashboard sync can be added later" requirement.
-
-## Rendering & i18n
-
-The UI is right-to-left and Hebrew-first (`dir="rtl"` on `body`). Category and
-day/meal labels are keyed by stable English ids with Hebrew display strings, so
-a second language can be added by extending the label maps.
+Plain functions render each view to HTML; a delegated `input`/`change`/`click`
+handler mutates state and schedules the matching save. Text edits update state
+without re-rendering (so focus is never lost); structural changes (add/remove,
+tab/week/house switch) re-render the view. All user-supplied strings are
+HTML-escaped on the way into the DOM.

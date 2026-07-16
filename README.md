@@ -6,20 +6,45 @@ manual stock count, and turns the week's plan into a **net shopping list** and a
 **budget estimate vs. actual**.
 
 The app is Hebrew-first and right-to-left, matching the people who use it
-(kitchen staff and administrators).
+(kitchen staff and administrators). It is built to the **E-Zone ecosystem
+standard**: a vanilla-JS frontend (no build step), a Node/Express static server
+with **HMAC session auth**, and a **Google Apps Script + Google Sheets**
+backend — the same shape as `ezone-managers` / `ezone-staffing`.
 
-> **v1 scope:** front-end only, data persists in the browser (localStorage).
-> The storage layer is abstracted so a shared backend/database can be added
-> later **without any schema changes** — see
-> [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+---
+
+## Architecture
+
+```
+Browser (vanilla JS, RTL)
+   │  PIN login → HMAC session token (Bearer)
+   ▼
+Node / Express server  (server.js)   ← hosted on Railway
+   │  • serves the static frontend + the shared domain module
+   │  • /api/login issues HMAC tokens; /api/sheets requires them
+   │  • proxies POSTs to Apps Script, injecting a server-only shared secret
+   ▼
+Google Apps Script  (apps-script/Code.gs, POST-only)
+   ▼
+Google Sheet — one tab per entity
+```
+
+The Apps Script `/exec` URL and every secret live **only in Railway environment
+variables** — never in the repo, never sent to the browser. The browser talks
+only to this server; the server talks to Apps Script. See
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+Data is **shared across users and devices** (a cook updates stock on one
+device; an admin sees every house on another) because the source of truth is
+the Google Sheet, not the browser.
 
 ---
 
 ## Features
 
 1. **Weekly menu** — per house, 7 days × 3 meals (breakfast / lunch / dinner).
-   Each dish is just a free-text **name + ingredients** `[{ name, category,
-   qty }]`. No recipe bank. One-click **"Copy last week"**.
+   Each dish is a free-text **name + ingredients** `[{ name, category, qtyKg }]`.
+   No recipe bank. One-click **"Copy last week"**.
 2. **Five fixed ingredient categories** everywhere (menu, stock, shopping):
    groceries (מכולת), vegetables (ירקות), fruits (פירות), meat (בשר),
    dry ingredients (יבשים).
@@ -47,11 +72,13 @@ Out of scope for v1 (by design): recipe bank, suppliers, kosher tagging
 
 ## The shopping-list math (single source of truth)
 
-The whole pipeline lives in `src/domain/` as small pure functions, each unit
-tested:
+Every non-negotiable calculation lives in one UMD module,
+[`lib/kitchen-domain.js`](lib/kitchen-domain.js) — pure functions, no DOM, no
+network. The **same file** runs in the browser (`<script src>`) and in the Node
+tests (`require`):
 
 ```
-aggregateWeek()   Σ over (day, meal, dish, ingredient) of qtyKgPerPerson × people(day)
+aggregateWeek()   Σ over (day, meal, dish, ingredient) qtyKgPerPerson × people(day)
 applyBuffer()     × 1.20   (the fixed 20% rule — one function, one place)
 subtractStock()   max(0, buffered − onHand)   (never negative)
 buildShoppingList()  runs all three, then groups by the five categories
@@ -62,21 +89,31 @@ estimateCost()    Σ toBuyKg × pricePerKg   (flags ingredients with no price)
 
 ---
 
-## Getting started
+## Getting started (local)
 
-Requires **Node ≥ 20**.
+Requires **Node ≥ 18**.
 
 ```bash
-npm install      # install dependencies
-npm run dev      # start Vite dev server (http://localhost:5173)
-npm test         # run the domain unit tests
-npm run typecheck
-npm run build    # type-check + build to dist/
-npm start        # serve the built dist/ (production, honours $PORT)
+npm install
+cp .env.example .env      # fill in APP_PIN, SESSION_SECRET, APPS_SCRIPT_URL, APPS_SCRIPT_SECRET
+npm test                  # 46 tests (domain math + HMAC auth + server)
+npm start                 # http://localhost:3000
 ```
 
-The app seeds two example houses on first run so the screens are non-empty.
-Clear it by removing the `ezone-kitchen:v1` key from browser localStorage.
+Without a configured `.env` the server fails closed (it refuses to start
+without its secrets) — that is intentional. For the backend, follow
+[`docs/APPS-SCRIPT-SETUP.md`](docs/APPS-SCRIPT-SETUP.md) to create the Sheet and
+deploy the Apps Script, then set the four variables.
+
+### Environment variables
+
+| Variable             | Purpose                                                        |
+| -------------------- | -------------------------------------------------------------- |
+| `APP_PIN`            | Access code kitchen staff / admins log in with (≤ 6 digits).   |
+| `SESSION_SECRET`     | HMAC key for session tokens (≥ 32 chars).                      |
+| `APPS_SCRIPT_URL`    | The Apps Script Web App `/exec` URL. Server-side only.         |
+| `APPS_SCRIPT_SECRET` | Shared secret matching the Apps Script `SHARED_SECRET` prop.   |
+| `SESSION_DAYS`       | Optional session lifetime in days (default 7).                 |
 
 ---
 
@@ -84,42 +121,30 @@ Clear it by removing the `ezone-kitchen:v1` key from browser localStorage.
 
 ```
 ezone-kitchen/
-├── index.html              # Vite entry
-├── server.mjs              # zero-dependency static server for production (Railway)
-├── railway.json            # Railway build/deploy config
-├── src/
-│   ├── main.tsx            # React entry, mounts <AppProvider>
-│   ├── App.tsx             # app shell + tab navigation
-│   ├── index.css           # RTL, Hebrew-first styling
-│   ├── domain/             # ⭐ pure, framework-free business logic (unit tested)
-│   │   ├── categories.ts   #    the five fixed categories
-│   │   ├── types.ts        #    the whole data model
-│   │   ├── units.ts        #    grams → kg normalisation
-│   │   ├── buffer.ts       #    applyBuffer() — the 20% rule
-│   │   ├── headcount.ts    #    per-day effective headcount
-│   │   ├── aggregate.ts    #    aggregateWeek()
-│   │   ├── shoppingList.ts #    buildShoppingList() + subtractStock()
-│   │   ├── budget.ts       #    estimateCost() / actual / summary
-│   │   ├── menuOps.ts      #    "copy last week"
-│   │   ├── weeks.ts        #    week/date helpers
-│   │   └── __tests__/      #    vitest specs (buffer, aggregate, stock, budget…)
-│   ├── storage/            # StorageAdapter interface + LocalStorageAdapter
-│   ├── state/              # AppContext (React store) + seed data
-│   ├── lib/                # currency / kg formatting, WhatsApp + print export
-│   └── components/         # UI: WeeklyMenu, HeadcountView, StockView,
-│                           #     ShoppingListView, BudgetView, AdminOverview…
-└── docs/                   # ARCHITECTURE, DATA-MODEL, DEPLOYMENT
+├── server.js               # Express: static + /api/login + /api/sheets proxy
+├── Procfile, railway.json  # Railway deploy config
+├── .env.example            # the four required env vars (no real values)
+├── lib/
+│   ├── auth.js             # HMAC session auth (server-only, never served)
+│   └── kitchen-domain.js   # ⭐ shared pure domain logic (browser + tests)
+├── public/                 # the vanilla frontend (no build step)
+│   ├── index.html          # RTL shell + login overlay
+│   ├── styles.css
+│   ├── favicon.svg
+│   └── app.js              # views, state, API client, debounced saves
+├── apps-script/
+│   └── Code.gs             # Google Apps Script backend (POST-only)
+├── test/                   # node --test: buffer, aggregate, stock, budget, auth, server
+└── docs/                   # ARCHITECTURE, DATA-MODEL, DEPLOYMENT, APPS-SCRIPT-SETUP
 ```
 
 ---
 
 ## Documentation
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — layering and the
-  storage-swap path to a backend.
-- [`docs/DATA-MODEL.md`](docs/DATA-MODEL.md) — every entity and how the
-  calculations use them.
-- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — Railway setup and the
-  **open questions** about branch/environment mapping (pending
-  `EZONE-ECOSYSTEM-STATUS.md`).
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — layers, auth, and data flow.
+- [`docs/DATA-MODEL.md`](docs/DATA-MODEL.md) — the Sheet tabs and the entities.
+- [`docs/APPS-SCRIPT-SETUP.md`](docs/APPS-SCRIPT-SETUP.md) — step-by-step backend
+  setup and the **redeploy-the-existing-deployment** rule.
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — Railway hosting + branch mapping.
 - [`CHANGELOG.md`](CHANGELOG.md) — kept up to date per commit.

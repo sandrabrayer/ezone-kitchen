@@ -1,31 +1,16 @@
 {
   "name": "ezone-kitchen",
-  "private": true,
-  "version": "0.1.0",
-  "type": "module",
-  "description": "Plan and budget weekly menus in ezone",
-  "engines": {
-    "node": ">=20"
-  },
+  "version": "0.2.0",
+  "description": "E-Zone kitchen — plan & budget weekly menus per house (menu, headcount, allergies, stock, shopping list, budget)",
+  "main": "server.js",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc --noEmit && vite build",
-    "preview": "vite preview",
-    "start": "node server.mjs",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
-  },
-  "devDependencies": {
-    "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
-    "@vitejs/plugin-react": "^4.3.4",
-    "typescript": "^5.6.3",
-    "vite": "^5.4.11",
-    "vitest": "^2.1.8"
+    "express": "^4.19.2"
   }
 }

@@ -1,54 +1,57 @@
 # Deployment (Railway)
 
-## What ships today
+ezone-kitchen is a plain Node/Express app — no build step. Railway runs
+`node server.js`; the server serves `public/` and proxies data calls to the
+Apps Script backend.
 
-The app builds to static assets (`dist/`) and is served in production by a
-tiny, zero-dependency Node server, [`server.mjs`](../server.mjs):
+- `Procfile` → `web: node server.js`
+- `railway.json` → NIXPACKS, start `node server.js`, health check `GET /healthz`
 
-- serves `dist/` and falls back to `index.html` for client routes (SPA),
-- listens on `$PORT` (Railway injects this),
-- sets `X-Content-Type-Options: nosniff` and blocks path traversal.
+## Branch mapping (from EZONE-ECOSYSTEM-STATUS.md)
 
-`railway.json` configures the build and start commands:
+The ecosystem status doc (now available via the `ezone-managers` repo) records
+that the mature apps deploy from **`main`**:
 
-```json
-{
-  "build":  { "builder": "NIXPACKS", "buildCommand": "npm ci && npm run build" },
-  "deploy": { "startCommand": "npm run start", "restartPolicyType": "ON_FAILURE" }
-}
-```
+| App        | Repo             | Railway deploys branch |
+| ---------- | ---------------- | ---------------------- |
+| Managers   | ezone-managers   | `main`                 |
+| Staffing   | ezone-staffing   | `main`                 |
+| Logistics  | …-ezone-logistics| `main`                 |
 
-### Deploy checklist
+**Recommendation for kitchen:** deploy from **`main`** to match the mature apps.
+This PR targets `main`, so once merged, `main` is the deploy branch.
 
-1. Create a Railway project and link this repo.
-2. Railway auto-detects Node; `npm ci && npm run build` produces `dist/`.
-3. `npm run start` runs `server.mjs`, binding `$PORT`.
-4. No environment variables are required for v1 (persistence is in-browser).
+> ⚠️ Straight from the ecosystem doc: *"Verify the Railway-connected branch in
+> the Railway dashboard before any work — it is NOT stored in the repo and has
+> been silently switched before."* And: *"always verify PR base = the deployed
+> branch."* Confirm in the Railway dashboard that this service is connected to
+> `main` before relying on auto-deploy.
 
-## ⚠️ Open question — branch / environment mapping
+## First deploy
 
-The project's non-negotiables require using the **correct Railway branch per
-`EZONE-ECOSYSTEM-STATUS.md`**. That document was **not available** in the
-session that scaffolded this app, so the branch↔environment mapping is **not
-hard-wired anywhere**. Nothing here guesses it.
+1. Create a Railway project and connect it to `sandrabrayer/ezone-kitchen`,
+   branch `main`.
+2. Set the environment variables (Railway → Variables):
 
-**Assumed defaults (please confirm and correct):**
+   | Variable             | Value                                              |
+   | -------------------- | -------------------------------------------------- |
+   | `APP_PIN`            | staff access code (≤ 6 digits)                     |
+   | `SESSION_SECRET`     | random string ≥ 32 chars                           |
+   | `APPS_SCRIPT_URL`    | the Apps Script `/exec` URL                        |
+   | `APPS_SCRIPT_SECRET` | same as the Apps Script `SHARED_SECRET` property   |
+   | `SESSION_DAYS`       | optional, default 7                                |
 
-| Environment | Branch                                   | Notes                         |
-| ----------- | ---------------------------------------- | ----------------------------- |
-| Production  | `main`                                   | Deploy on merge to `main`.    |
-| Preview     | `claude/ezone-kitchen-scaffold-65odua`   | This feature branch / its PR. |
+   The server **fails closed**: it refuses to start if any of the first four is
+   missing (or if `SESSION_SECRET` < 32 chars). That is intentional.
+3. Deploy. Railway health-checks `GET /healthz`.
+4. Do the Google side once: [`APPS-SCRIPT-SETUP.md`](APPS-SCRIPT-SETUP.md).
 
-To finalise:
+> ⚠️ Also from the ecosystem doc: *"Railway variable changes apply only to
+> deployments started after saving."* Redeploy after changing a variable.
 
-1. Add `EZONE-ECOSYSTEM-STATUS.md` to the repo (or share its branch/Railway
-   conventions).
-2. Point each Railway service/environment at the branch it specifies.
-3. Update this table and the `CHANGELOG.md` "open questions" note.
+## Notes
 
-## Future: backend on the same service
-
-When a backend is added (see `docs/ARCHITECTURE.md`), it lives in the same
-`server.mjs` process under `/api/*`, and Postgres is attached as a Railway
-plugin exposing `DATABASE_URL`. The build/start commands and this deployment
-shape do **not** need to change.
+- Secrets live only in Railway variables — never in the repo (`.env` is
+  git-ignored; `.env.example` holds placeholders only).
+- The Apps Script `/exec` URL and `APPS_SCRIPT_SECRET` never reach the browser;
+  the server injects the secret when proxying.

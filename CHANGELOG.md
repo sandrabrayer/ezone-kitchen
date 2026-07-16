@@ -7,36 +7,54 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
-### Added — v1 scaffold
+### Changed — 0.2.0: rebuilt to the E-Zone ecosystem standard
 
-- **Project scaffold**: React + Vite + TypeScript, Hebrew-first / RTL UI.
-- **Domain layer** (`src/domain/`) — pure, framework-free, unit-tested:
-  - Five fixed ingredient categories (groceries, vegetables, fruits, meat, dry).
-  - Kilogram-only units with grams-in / kg-stored normalisation.
-  - `applyBuffer()` — the single, tested 20% purchasing-buffer function.
-  - `aggregateWeek()` — sums a week's ingredients × per-day headcount.
-  - `subtractStock()` / `buildShoppingList()` — net shopping list, never negative,
-    grouped by the five categories.
-  - `estimateCost()` / `actualSpendForWeek()` / `summariseBudget()` — budget math
-    with price-per-kg and estimate-vs-actual, flagging missing prices.
-  - Per-day headcount overrides; "copy last week" menu operation.
-- **Tests** (`vitest`, 26 tests): the 20% rule, aggregation, stock subtraction,
-  and budget math.
-- **Storage abstraction**: `StorageAdapter` interface + `LocalStorageAdapter`,
-  so a backend can replace persistence with no schema/UI changes.
-- **UI**: weekly menu (7×3 with dishes/ingredients + copy-last-week), headcount
-  (base + per-day overrides), allergies, stock (category tabs), shopping list
-  (printable + WhatsApp export), budget (spend log, prices, estimate vs actual),
-  and an admin all-houses overview.
-- **Production server**: zero-dependency `server.mjs` static server with SPA
-  fallback and path-traversal protection; `railway.json` build/deploy config.
-- **Docs**: README, `docs/ARCHITECTURE.md`, `docs/DATA-MODEL.md`,
-  `docs/DEPLOYMENT.md`.
+The initial 0.1 scaffold (React + Vite + TypeScript, localStorage) was replaced
+— in the same PR — to match the existing six-app ecosystem exactly. Reference:
+`ezone-managers`.
 
-### Known open questions
+- **Frontend rewritten in vanilla JS** (HTML/CSS/JS, Hebrew RTL) — **no build
+  step**. Served statically from `public/`.
+- **Backend is Google Apps Script + Google Sheets** (one tab per entity:
+  houses, budget, headcount, allergies, stock, ingredientPrices, menus,
+  purchases). POST-only routes; writes serialised with `LockService`. Code in
+  `apps-script/Code.gs`; setup in `docs/APPS-SCRIPT-SETUP.md`.
+- **Node/Express host with HMAC session auth** (`server.js` + `lib/auth.js`),
+  same standard as ezone-managers / ezone-staffing: PIN → `kitchen:`-scoped
+  HMAC token, per-IP login rate limit, fail-closed startup, `lib/` not served
+  except the shared domain module.
+- **Config is never in the repo:** the Apps Script `/exec` URL and all secrets
+  live only in Railway env vars; the browser never sees them (the server proxies
+  and injects a server-only shared secret).
+- **Data is shared across users/devices** (source of truth = the Sheet), which
+  the previous localStorage design could not provide.
 
-- **Railway branch/environment mapping** is not yet wired because
-  `EZONE-ECOSYSTEM-STATUS.md` was not available in this session. Defaults and
-  the decision points are documented in `docs/DEPLOYMENT.md` for confirmation.
-- **Persistence is per-browser (localStorage)** in v1; "admin view all houses"
-  is therefore single-device until the server adapter is added.
+### Preserved
+
+- **All non-negotiable domain logic** (20% buffer, week aggregation, stock
+  subtraction, budget math) ported verbatim to `lib/kitchen-domain.js` as a UMD
+  module — the same file runs in the browser and under Node tests.
+- **All 26 domain tests** ported to `node --test`, plus **HMAC auth and server
+  tests** (46 tests total, all green).
+
+### Features (unchanged from the spec)
+
+Per house: weekly menu (7×3, dish = name + ingredients, "copy last week"); five
+fixed categories; kilograms-only (grams accepted); manual headcount with per-day
+overrides; allergies with counts (on menu + printed on list); manual stock;
+shopping list (× headcount → +20% → − stock, never negative, printable +
+WhatsApp); budget (target, actual log, estimate vs actual from price/kg, admin
+all-houses view).
+
+### Docs
+
+README, `docs/ARCHITECTURE.md`, `docs/DATA-MODEL.md`, `docs/DEPLOYMENT.md`, and
+`docs/APPS-SCRIPT-SETUP.md` all rewritten to the new architecture.
+`EZONE-ECOSYSTEM-STATUS.md` (obtained from the `ezone-managers` repo) confirms
+the mature apps deploy from `main`; kitchen follows suit and this PR targets
+`main`.
+
+### 0.1.0 (superseded, same PR)
+
+Initial scaffold: React + Vite + TypeScript, Hebrew-first/RTL, localStorage with
+a StorageAdapter seam, static server. Replaced by 0.2.0 above.

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#2f7d5b" />
+  <meta name="description" content="איזון — מטבח: תכנון ותקצוב תפריטים שבועיים לכל בית" />
+  <title>איזון — מטבח</title>
+
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <!-- Login overlay -->
+  <div id="loginOverlay" class="login-overlay" hidden>
+    <div class="login-card" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+      <div class="login-brand">איזון · מטבח</div>
+      <h2 id="loginTitle">כניסה</h2>
+      <p class="login-sub">הזינו קוד גישה</p>
+      <input id="loginPin" class="login-pin" type="password" inputmode="numeric"
+             autocomplete="one-time-code" maxlength="6" dir="ltr" aria-label="קוד גישה" />
+      <button id="loginBtn" class="login-btn" type="button">כניסה</button>
+      <div id="loginError" class="login-error" role="alert" hidden></div>
+    </div>
+  </div>
+
+  <!-- App bar -->
+  <header class="appbar no-print">
+    <div class="appbar-inner">
+      <div class="brand">
+        <img src="/favicon.svg" alt="" width="26" height="26" />
+        <span>איזון · מטבח</span>
+      </div>
+      <div class="spacer"></div>
+      <div class="controls">
+        <label class="muted" for="houseSelect">בית:</label>
+        <select id="houseSelect" aria-label="בחירת בית"></select>
+        <button id="addHouseBtn" class="ghost" title="הוסף בית" type="button">＋</button>
+        <select id="roleSelect" aria-label="תפקיד" title="תפקיד">
+          <option value="cook">טבח/ית</option>
+          <option value="admin">מנהל/ת</option>
+        </select>
+        <button id="logoutBtn" class="ghost" title="התנתקות" type="button">יציאה</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Tabs -->
+  <nav class="tabs no-print" id="tabs" role="tablist" aria-label="ניווט"></nav>
+
+  <!-- Screen -->
+  <main class="app"><div id="screen"></div></main>
+
+  <footer class="foot no-print"><span id="footStatus" class="muted"></span></footer>
+
+  <script src="/lib/kitchen-domain.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
