@@ -21,14 +21,31 @@ const path = require('path');
 
 const { signToken, verifyToken, checkPin } = require('./lib/auth');
 
+// Sanitise a value coming from an env var. Hosting dashboards (Railway, etc.)
+// commonly introduce a trailing newline/space or wrap the value in quotes when
+// it is pasted; the browser sends a trimmed PIN, so without this the stored PIN
+// would never match and every login 401s even though the deploy looks healthy.
+// Trims surrounding whitespace and strips ONE matching pair of surrounding
+// quotes.
+function cleanEnv(v) {
+  let s = String(v == null ? '' : v).trim();
+  if (s.length >= 2) {
+    const q = s[0];
+    if ((q === '"' || q === "'") && s[s.length - 1] === q) {
+      s = s.slice(1, -1).trim();
+    }
+  }
+  return s;
+}
+
 const PORT = Number(process.env.PORT) || 3000;
-const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
+const APPS_SCRIPT_URL = cleanEnv(process.env.APPS_SCRIPT_URL);
 // Shared secret proving to Apps Script that a request came from THIS server
 // (not from anyone who discovered the /exec URL). Server-side only.
-const APPS_SCRIPT_SECRET = process.env.APPS_SCRIPT_SECRET || '';
+const APPS_SCRIPT_SECRET = cleanEnv(process.env.APPS_SCRIPT_SECRET);
 // Admin code: all houses + the budget admin (all-houses) view.
-const ADMIN_PIN = process.env.ADMIN_PIN || '';
-const SESSION_SECRET = process.env.SESSION_SECRET || '';
+const ADMIN_PIN = cleanEnv(process.env.ADMIN_PIN);
+const SESSION_SECRET = cleanEnv(process.env.SESSION_SECRET);
 const SESSION_DAYS = Number(process.env.SESSION_DAYS) || 7;
 
 function fatal(msg) {
@@ -41,10 +58,11 @@ function fatal(msg) {
 // startup. An empty/absent value simply means no cook can log in yet (admin
 // still works) — that is not fatal.
 function parseCookPins(raw) {
-  if (!raw || !String(raw).trim()) return {};
+  const cleaned = cleanEnv(raw); // tolerate a quoted / whitespace-padded blob
+  if (!cleaned) return {};
   let obj;
   try {
-    obj = JSON.parse(raw);
+    obj = JSON.parse(cleaned);
   } catch {
     fatal('COOK_PINS must be valid JSON, e.g. {"1111":"house_ab12"}');
   }
@@ -52,19 +70,20 @@ function parseCookPins(raw) {
     fatal('COOK_PINS must be a JSON object mapping pin -> houseId');
   }
   const out = {};
-  for (const pin of Object.keys(obj)) {
-    const houseId = obj[pin];
+  for (const rawPin of Object.keys(obj)) {
+    // Trim the pin and clean the house id the same way, so a padded env value
+    // still matches the trimmed PIN the browser sends.
+    const pin = String(rawPin).trim();
+    const houseId = cleanEnv(obj[rawPin]);
     if (!pin) fatal('COOK_PINS contains an empty PIN');
-    if (typeof houseId !== 'string' || !houseId.trim()) {
-      fatal(`COOK_PINS["${pin}"] must be a non-empty house id string`);
-    }
+    if (!houseId) fatal(`COOK_PINS["${rawPin}"] must be a non-empty house id string`);
     if (houseId.indexOf(':') !== -1) {
-      fatal(`COOK_PINS["${pin}"] house id must not contain ':'`);
+      fatal(`COOK_PINS["${rawPin}"] house id must not contain ':'`);
     }
     if (ADMIN_PIN && pin === ADMIN_PIN) {
       fatal('A cook PIN must not equal ADMIN_PIN');
     }
-    out[pin] = houseId.trim();
+    out[pin] = houseId;
   }
   return out;
 }
