@@ -17,11 +17,13 @@ backend — the same shape as `ezone-managers` / `ezone-staffing`.
 
 ```
 Browser (vanilla JS, RTL)
-   │  PIN login → HMAC session token (Bearer)
+   │  cook: house URL /h/<houseId>  (no login — the path is the house)
+   │  admin: ADMIN_PIN login → HMAC session token (Bearer)
    ▼
 Node / Express server  (server.js)   ← hosted on Railway
    │  • serves the static frontend + the shared domain module
-   │  • /api/login issues HMAC tokens; /api/sheets requires them
+   │  • /h/<houseId>/api/sheets → cook scope pinned to that house (no token)
+   │  • /api/login issues the admin token; /api/sheets requires it (all houses)
    │  • proxies POSTs to Apps Script, injecting a server-only shared secret
    ▼
 Google Apps Script  (apps-script/Code.gs, POST-only)
@@ -37,6 +39,28 @@ only to this server; the server talks to Apps Script. See
 Data is **shared across users and devices** (a cook updates stock on one
 device; an admin sees every house on another) because the source of truth is
 the Google Sheet, not the browser.
+
+---
+
+## Access model
+
+- **Cooks don't log in.** Each house has a dedicated URL and opening it goes
+  straight into that one house — locked to it (no house switcher, no add-house,
+  no all-houses view). The house is pinned **server-side from the URL path**, so
+  a house URL can read and write **only its own** house's data; no other house is
+  reachable from it. The URL is the access — hand each cook their house URL.
+
+  | House               | URL                     |
+  | ------------------- | ----------------------- |
+  | רמות השבים          | `/h/ramot-hashavim`     |
+  | רעננה אשר           | `/h/raanana-asher`      |
+  | קיסריה עפרוני       | `/h/caesarea-ofroni`    |
+  | קיסריה שיקום        | `/h/caesarea-rehab`     |
+  | פרדס                | `/h/pardes`             |
+
+- **Admin logs in.** The root URL `/` and the budget admin (all-houses) view stay
+  behind the `ADMIN_PIN` login, which mints an HMAC session token. `/api/sheets`
+  (all houses) requires that token.
 
 ---
 
@@ -95,7 +119,7 @@ Requires **Node ≥ 18**.
 
 ```bash
 npm install
-cp .env.example .env      # fill in ADMIN_PIN, COOK_PINS, SESSION_SECRET, APPS_SCRIPT_URL, APPS_SCRIPT_SECRET
+cp .env.example .env      # fill in ADMIN_PIN, SESSION_SECRET, APPS_SCRIPT_URL, APPS_SCRIPT_SECRET
 npm test                  # domain math + HMAC auth + server + cook scoping
 npm start                 # http://localhost:3000
 ```
@@ -109,9 +133,8 @@ deploy the Apps Script, then set the four variables.
 
 | Variable             | Purpose                                                        |
 | -------------------- | -------------------------------------------------------------- |
-| `ADMIN_PIN`          | Admin access code (a word) — all houses + the budget admin (all-houses) view. Matched case-insensitively. |
-| `COOK_PINS`          | JSON map of per-house cook codes (words), `{"code":"houseId"}`. Each cook code opens only its own house. Case-insensitive. Optional. |
-| `SESSION_SECRET`     | HMAC key for session tokens (≥ 32 chars).                      |
+| `ADMIN_PIN`          | Admin access code (a word) — all houses + the budget admin (all-houses) view. The only login; matched case-insensitively. (Cooks don't log in — they use a house URL `/h/<houseId>`.) |
+| `SESSION_SECRET`     | HMAC key for the admin session token (≥ 32 chars).            |
 | `APPS_SCRIPT_URL`    | The Apps Script Web App `/exec` URL. Server-side only.         |
 | `APPS_SCRIPT_SECRET` | Shared secret matching the Apps Script `SHARED_SECRET` prop.   |
 | `SESSION_DAYS`       | Optional session lifetime in days (default 7).                 |
@@ -122,9 +145,9 @@ deploy the Apps Script, then set the four variables.
 
 ```
 ezone-kitchen/
-├── server.js               # Express: static + /api/login + /api/sheets proxy
+├── server.js               # Express: static + /api/login (admin) + /h/<id>/api/sheets (cook) + /api/sheets (admin) proxy
 ├── Procfile, railway.json  # Railway deploy config
-├── .env.example            # required env vars incl. ADMIN_PIN / COOK_PINS (no real values)
+├── .env.example            # required env vars incl. ADMIN_PIN (no real values)
 ├── lib/
 │   ├── auth.js             # HMAC session auth + role/house claims (server-only)
 │   └── kitchen-domain.js   # ⭐ shared pure domain logic (browser + tests)

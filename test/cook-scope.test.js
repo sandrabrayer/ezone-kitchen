@@ -1,13 +1,14 @@
 'use strict';
 /*
  * Proves the server-side "own house only" enforcement for cooks against a mock
- * Apps Script upstream: a cook's `load` is filtered to their house, and a cook's
- * writes are pinned to their house id — a hand-crafted request naming another
- * house cannot read or write it. Admin requests are untouched.
+ * Apps Script upstream. Cooks DON'T log in: the house comes from the URL path
+ * (POST /h/<houseId>/api/sheets). A cook's `load` is filtered to that house, and
+ * a cook's writes are pinned to that house id — a hand-crafted request naming
+ * another house can neither read nor write it. Admin requests (Bearer token on
+ * /api/sheets) are untouched.
  */
 process.env.NODE_ENV = 'test';
 process.env.ADMIN_PIN = '4321';
-process.env.COOK_PINS = JSON.stringify({ '1111': 'house_alpha' });
 process.env.SESSION_SECRET = 'k'.repeat(32);
 process.env.APPS_SCRIPT_SECRET = 'shh-server-only';
 // APPS_SCRIPT_URL is set to the mock's address before requiring ../server.
@@ -40,7 +41,7 @@ function request(server, method, path, { body, headers } = {}) {
   });
 }
 
-test('cook scoping is enforced server-side', async (t) => {
+test('cook scoping is enforced server-side from the URL path', async (t) => {
   // ---- mock Apps Script upstream ----
   let lastBody = null;
   const upstream = http.createServer((req, res) => {
@@ -73,13 +74,11 @@ test('cook scoping is enforced server-side', async (t) => {
   await new Promise((r) => server.once('listening', r));
   t.after(() => server.close());
 
-  const cook = signToken(process.env.SESSION_SECRET, { role: 'cook', houseId: 'house_alpha' }, 1);
   const admin = signToken(process.env.SESSION_SECRET, { role: 'admin', houseId: '' }, 1);
 
-  await t.test('cook load is filtered to their own house', async () => {
-    const r = await request(server, 'POST', '/api/sheets', {
+  await t.test('cook load (house URL, no token) is filtered to their own house', async () => {
+    const r = await request(server, 'POST', '/h/house_alpha/api/sheets', {
       body: { action: 'load' },
-      headers: { Authorization: `Bearer ${cook}` },
     });
     assert.equal(r.status, 200);
     const data = JSON.parse(r.text);
@@ -87,7 +86,15 @@ test('cook scoping is enforced server-side', async (t) => {
     assert.equal(data.houses[0].id, 'house_alpha');
   });
 
-  await t.test('admin load sees every house', async () => {
+  await t.test("another house's data is NOT reachable from a house URL", async () => {
+    const r = await request(server, 'POST', '/h/house_alpha/api/sheets', {
+      body: { action: 'load' },
+    });
+    assert.doesNotMatch(r.text, /house_beta/);
+    assert.doesNotMatch(r.text, /Beta/);
+  });
+
+  await t.test('admin load (Bearer token) sees every house', async () => {
     const r = await request(server, 'POST', '/api/sheets', {
       body: { action: 'load' },
       headers: { Authorization: `Bearer ${admin}` },
@@ -98,21 +105,27 @@ test('cook scoping is enforced server-side', async (t) => {
   });
 
   await t.test('cook write to another house is rewritten to their own house', async () => {
-    await request(server, 'POST', '/api/sheets', {
+    await request(server, 'POST', '/h/house_alpha/api/sheets', {
       body: { action: 'saveStock', houseId: 'house_beta', stock: [{ id: 's1', name: 'x' }] },
-      headers: { Authorization: `Bearer ${cook}` },
     });
     assert.equal(lastBody.houseId, 'house_alpha'); // pinned, not house_beta
     assert.equal(lastBody.secret, 'shh-server-only'); // server injected the shared secret
   });
 
   await t.test('cook saveHouse cannot target another house id (only their own)', async () => {
-    await request(server, 'POST', '/api/sheets', {
+    await request(server, 'POST', '/h/house_alpha/api/sheets', {
       body: { action: 'saveHouse', house: { id: 'house_beta', name: 'hijack', weeklyBudget: 9 } },
-      headers: { Authorization: `Bearer ${cook}` },
     });
     assert.equal(lastBody.house.id, 'house_alpha'); // id pinned
     assert.equal(lastBody.house.name, 'hijack');    // other fields pass through
+  });
+
+  await t.test('the house URL pins the house it names, not another', async () => {
+    // The house comes from the PATH, so the beta URL touches only beta.
+    await request(server, 'POST', '/h/house_beta/api/sheets', {
+      body: { action: 'saveStock', houseId: 'house_alpha', stock: [] },
+    });
+    assert.equal(lastBody.houseId, 'house_beta');
   });
 
   await t.test('admin writes are NOT rewritten', async () => {

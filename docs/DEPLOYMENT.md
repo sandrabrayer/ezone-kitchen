@@ -35,8 +35,7 @@ This PR targets `main`, so once merged, `main` is the deploy branch.
 
    | Variable             | Value                                              |
    | -------------------- | -------------------------------------------------- |
-   | `ADMIN_PIN`          | admin access code (a word) — all houses + budget admin view |
-   | `COOK_PINS`          | JSON map of per-house cook codes (words), `{"code":"houseId"}` (optional) |
+   | `ADMIN_PIN`          | admin access code (a word) — all houses + budget admin view. The only login. |
    | `SESSION_SECRET`     | random string ≥ 32 chars                           |
    | `APPS_SCRIPT_URL`    | the Apps Script `/exec` URL                        |
    | `APPS_SCRIPT_SECRET` | same as the Apps Script `SHARED_SECRET` property   |
@@ -44,11 +43,10 @@ This PR targets `main`, so once merged, `main` is the deploy branch.
 
    The server **fails closed**: it refuses to start if `ADMIN_PIN`,
    `SESSION_SECRET`, `APPS_SCRIPT_URL`, or `APPS_SCRIPT_SECRET` is missing (or if
-   `SESSION_SECRET` < 32 chars). That is intentional. `COOK_PINS` is optional —
-   leave it empty until you hand out cook codes, then map each cook's word code
-   to a house id (the seeded id, or copy it from the admin all-houses view).
-   Codes are matched case-insensitively, so each must differ from `ADMIN_PIN`
-   and the others by more than case/spacing.
+   `SESSION_SECRET` < 32 chars). That is intentional. **Cooks don't log in** —
+   each house has a dedicated URL `/h/<houseId>` (e.g. `/h/ramot-hashavim`) that
+   opens straight into that one house, so there is nothing to configure for
+   cooks; just hand each cook their house URL.
 3. Deploy. Railway health-checks `GET /healthz`.
 4. Do the Google side once: [`APPS-SCRIPT-SETUP.md`](APPS-SCRIPT-SETUP.md).
 

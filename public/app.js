@@ -50,16 +50,32 @@ function decodeToken(token) {
 }
 
 /* ============================ API client ============================ */
+/* A cook has no login: their house comes from the URL (/h/<houseId>), so their
+   API calls go to that same path (/h/<houseId>/api/sheets) with no token — the
+   server pins the house from the path. An admin holds a Bearer token and calls
+   the all-houses /api/sheets endpoint. */
+function apiEndpoint() {
+  return state.role === 'cook'
+    ? '/h/' + encodeURIComponent(state.myHouseId) + '/api/sheets'
+    : '/api/sheets';
+}
+
 async function api(action, payload) {
-  const token = getToken();
   const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
-  if (token) headers.Authorization = 'Bearer ' + token;
-  const r = await fetch('/api/sheets', {
+  if (state.role !== 'cook') {
+    const token = getToken();
+    if (token) headers.Authorization = 'Bearer ' + token;
+  }
+  const r = await fetch(apiEndpoint(), {
     method: 'POST',
     headers,
     body: JSON.stringify(Object.assign({ action }, payload || {})),
   });
-  if (r.status === 401) { setToken(''); showLogin(); throw new Error('נדרשת התחברות'); }
+  if (r.status === 401) {
+    // Only the admin surface can re-authenticate; a cook URL has no login.
+    if (state.role !== 'cook') { setToken(''); showLogin(); throw new Error('נדרשת התחברות'); }
+    throw new Error('הגישה נדחתה');
+  }
   const text = await r.text();
   let data;
   try { data = JSON.parse(text); } catch { throw new Error('תשובה לא תקינה מהשרת'); }
@@ -151,6 +167,7 @@ function renderChrome() {
   const houseName = $('#houseName');
   const addBtn = $('#addHouseBtn');
   const badge = $('#roleBadge');
+  const logoutBtn = $('#logoutBtn');
 
   if (isAdmin) {
     // Admin: switch across all houses, and may add houses.
@@ -158,12 +175,15 @@ function renderChrome() {
     houseSel.innerHTML = state.houses.map((h) => `<option value="${esc(h.id)}">${esc(h.name)}</option>`).join('');
     if (activeHouse()) houseSel.value = activeHouse().id;
     badge.hidden = false; badge.textContent = 'מנהל/ת';
+    if (logoutBtn) logoutBtn.hidden = false; // admin has a session to end
   } else {
-    // Cook: locked to one house — no switcher, no add-house.
+    // Cook: locked to one house — no switcher, no add-house, no logout (there is
+    // no login; the URL is the access).
     houseSel.hidden = true; houseLabel.hidden = true; addBtn.hidden = true;
     const h = activeHouse();
     houseName.hidden = false; houseName.textContent = h ? h.name : '';
     badge.hidden = false; badge.textContent = 'טבח/ית';
+    if (logoutBtn) logoutBtn.hidden = true;
   }
 
   // Only admin gets the all-houses view.
@@ -472,7 +492,7 @@ function renderAdmin() {
   return `<div class="card">
     <h2>מבט מנהל — כל הבתים</h2>
     <p class="muted">שבוע ${esc(KD.formatDateHe(weekOf))}</p>
-    <p class="muted" style="font-size:.75rem">💡 המזהה שמתחת לשם הבית הוא ה־house id — השתמשו בו כדי לשייך קוד טבח/ית לבית ב־<code>COOK_PINS</code>.</p>
+    <p class="muted" style="font-size:.75rem">💡 המזהה שמתחת לשם הבית הוא ה־house id — כתובת הבית לטבח/ית היא <code>/h/&lt;house id&gt;</code> (למשל <code>/h/ramot-hashavim</code>). פתיחת הכתובת נכנסת ישירות לאותו בית, ללא כניסה.</p>
     <table>
       <thead><tr><th>בית</th><th>סועדים (בסיס)</th><th>תקציב</th><th>הערכה</th><th>בפועל</th><th>מול תקציב</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
@@ -665,14 +685,26 @@ async function submitLogin() {
 }
 
 /* ============================ boot ============================ */
+/* A house URL is /h/<houseId>. When the page is opened there, we go straight
+   into that house in cook scope — no login. The root URL / is the admin surface
+   and stays behind the ADMIN_PIN login. */
+function housePathId() {
+  const m = /^\/h\/([^/]+)\/?$/.exec(location.pathname);
+  return m ? decodeURIComponent(m[1]) : '';
+}
+
 async function start() {
   try {
-    // Role + house come from the signed token — the server set them from the PIN.
-    const claims = decodeToken(getToken());
-    if (!claims) { setToken(''); showLogin(); return; }
-    state.role = claims.role === 'admin' ? 'admin' : 'cook';
-    state.myHouseId = claims.houseId || '';
-    if (state.role !== 'admin' && state.tab === 'admin') state.tab = 'menu';
+    if (state.role === 'cook') {
+      // House came from the URL path; the server pins it. No token, no login.
+      state.tab = state.tab === 'admin' ? 'menu' : state.tab;
+    } else {
+      // Admin: role + (no) house come from the signed token, set at login.
+      const claims = decodeToken(getToken());
+      if (!claims || claims.role !== 'admin') { setToken(''); showLogin(); return; }
+      state.role = 'admin';
+      state.myHouseId = '';
+    }
     setStatus('טוען נתונים…');
     await loadState();
     setStatus('');
@@ -688,7 +720,18 @@ function boot() {
   wireChrome();
   $('#loginBtn').addEventListener('click', submitLogin);
   $('#loginPin').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitLogin(); });
-  if (getToken()) start(); else showLogin();
+
+  const houseId = housePathId();
+  if (houseId) {
+    // Cook: dedicated house URL — locked to this one house, no login.
+    state.role = 'cook';
+    state.myHouseId = houseId;
+    start();
+  } else {
+    // Admin surface at the root URL — needs the ADMIN_PIN session token.
+    state.role = 'admin';
+    if (getToken()) start(); else showLogin();
+  }
 }
 
 document.addEventListener('DOMContentLoaded', boot);

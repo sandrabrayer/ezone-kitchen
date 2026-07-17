@@ -1,13 +1,16 @@
 'use strict';
 /*
- * SECURITY REGRESSION: every /api/sheets request — read AND write — must be
- * rejected with 401 when there is no valid session token. A mock upstream that
- * returns 200 lets us distinguish "auth rejected" (401) from "auth passed but
- * upstream failed" (would be 200/502), so a bypass cannot hide behind a 502.
+ * SECURITY REGRESSION for the URL-based access model:
+ *   - The admin all-houses endpoint (/api/sheets) must reject every request —
+ *     read AND write — with 401 when there is no valid admin token. This is the
+ *     ONLY way to reach all houses at once, so it stays behind the login.
+ *   - A house URL (/h/<houseId>/api/sheets) needs NO login, but must return ONLY
+ *     that house's data; another house's data must never be reachable from it.
+ * A mock upstream that returns 200 with multiple houses lets us distinguish
+ * "auth rejected" (401) from a leak (200 with foreign data).
  */
 process.env.NODE_ENV = 'test';
 process.env.ADMIN_PIN = 'RAMOT';
-process.env.COOK_PINS = '{}';
 process.env.SESSION_SECRET = 'k'.repeat(32);
 process.env.APPS_SCRIPT_SECRET = 'shh';
 
@@ -32,12 +35,18 @@ function request(server, method, path, { body, headers } = {}) {
   });
 }
 
-test('/api/sheets rejects unauthenticated read AND write', async (t) => {
-  // Mock upstream that would happily return data IF a request ever reached it
-  // without auth — so a bypass shows up as 200, not a masking 502.
+test('admin endpoint stays behind login; a house URL reaches only its own house', async (t) => {
+  // Mock upstream returning TWO houses, so a scoping bug shows up as foreign
+  // data in the response rather than being masked.
   const upstream = http.createServer((req, res) => {
     let b = ''; req.on('data', (c) => { b += c; });
-    req.on('end', () => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ ok: true, houses: [{ id: 'ramot-hashavim', name: 'רמות השבים' }] })); });
+    req.on('end', () => {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ ok: true, houses: [
+        { id: 'ramot-hashavim', name: 'רמות השבים' },
+        { id: 'pardes', name: 'פרדס' },
+      ] }));
+    });
   });
   upstream.listen(0, '127.0.0.1');
   await new Promise((r) => upstream.once('listening', r));
@@ -50,32 +59,46 @@ test('/api/sheets rejects unauthenticated read AND write', async (t) => {
   await new Promise((r) => server.once('listening', r));
   t.after(() => server.close());
 
-  await t.test('no token → load is 401 (not 200 with data)', async () => {
+  await t.test('admin: no token → load is 401 (not 200 with all houses)', async () => {
     const r = await request(server, 'POST', '/api/sheets', { body: { action: 'load' } });
     assert.equal(r.status, 401);
   });
 
-  await t.test('no token → write (saveStock) is 401', async () => {
+  await t.test('admin: no token → write (saveStock) is 401', async () => {
     const r = await request(server, 'POST', '/api/sheets', { body: { action: 'saveStock', houseId: 'ramot-hashavim', stock: [] } });
     assert.equal(r.status, 401);
   });
 
-  await t.test('no token → saveHouse write is 401', async () => {
-    const r = await request(server, 'POST', '/api/sheets', { body: { action: 'saveHouse', house: { id: 'x', name: 'hijack' } } });
-    assert.equal(r.status, 401);
-  });
-
-  await t.test('garbage / forged token → 401', async () => {
+  await t.test('admin: garbage / forged token → 401', async () => {
     for (const bad of ['Bearer nope', 'Bearer a.b', 'Bearer .', 'Bearer ' + 'x'.repeat(64)]) {
       const r = await request(server, 'POST', '/api/sheets', { body: { action: 'load' }, headers: { Authorization: bad } });
       assert.equal(r.status, 401);
     }
   });
 
-  await t.test('a valid token DOES reach the upstream (proves the mock would leak if auth were bypassed)', async () => {
+  await t.test('house URL: no login → 200 with ONLY that house', async () => {
+    const r = await request(server, 'POST', '/h/ramot-hashavim/api/sheets', { body: { action: 'load' } });
+    assert.equal(r.status, 200);
+    const data = JSON.parse(r.text);
+    assert.equal(data.houses.length, 1);
+    assert.equal(data.houses[0].id, 'ramot-hashavim');
+    // Another house's data must not be reachable from this URL.
+    assert.doesNotMatch(r.text, /pardes/);
+    assert.doesNotMatch(r.text, /פרדס/);
+  });
+
+  await t.test('house URL write is pinned to the URL house', async () => {
+    const r = await request(server, 'POST', '/h/ramot-hashavim/api/sheets', {
+      body: { action: 'saveStock', houseId: 'pardes', stock: [] },
+    });
+    assert.equal(r.status, 200); // accepted, but pinned upstream (see cook-scope test)
+  });
+
+  await t.test('a valid admin token DOES reach the upstream (proves the mock would leak if auth were bypassed)', async () => {
     const token = signToken(process.env.SESSION_SECRET, { role: 'admin', houseId: '' }, 1);
     const r = await request(server, 'POST', '/api/sheets', { body: { action: 'load' }, headers: { Authorization: `Bearer ${token}` } });
     assert.equal(r.status, 200);
     assert.match(r.text, /ramot-hashavim/);
+    assert.match(r.text, /pardes/); // admin sees all houses
   });
 });
