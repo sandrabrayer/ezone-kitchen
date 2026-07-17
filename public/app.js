@@ -171,36 +171,42 @@ function allergyBanner(house) {
 }
 
 /* ---------------------------- Menu view ---------------------------- */
+function todayKey() { return KD.DAYS[new Date().getDay()]; }
+
 function renderMenu(house) {
   const weekOf = state.currentWeekOf;
   const week = ensureWeek(house, weekOf);
   const hasLast = !!(house.weeks && house.weeks[KD.shiftWeek(weekOf, -1)]);
+  const thisWeek = weekOf === KD.weekStart(new Date());
+  const today = todayKey();
 
   const cols = KD.DAYS.map((day) => {
     const people = KD.effectiveForDay(house.headcount, day).total;
+    const isToday = thisWeek && day === today;
     const meals = KD.MEALS.map((meal) => {
       const dishes = week.days[day][meal] || [];
       const dishHtml = dishes.map((dish) => renderDish(day, meal, dish)).join('');
-      return `<div class="meal-block">
-        <div class="row between"><span class="meal-label">${esc(KD.MEAL_LABELS_HE[meal])}</span>
-          <button class="ghost" data-act="addDish" data-day="${day}" data-meal="${meal}">＋ מנה</button></div>
-        ${dishHtml}
+      return `<div class="meal-block meal-${meal}">
+        <div class="meal-head"><span class="meal-label">${esc(KD.MEAL_LABELS_HE[meal])}</span>
+          <button class="add-row" data-act="addDish" data-day="${day}" data-meal="${meal}">＋ מנה</button></div>
+        ${dishHtml || '<div class="meal-empty">—</div>'}
       </div>`;
     }).join('');
-    return `<div class="day-col">
-      <div class="day-head"><span>${esc(KD.DAY_LABELS_HE[day])}</span><span class="pill" title="סועדים ביום זה">👥 ${people}</span></div>
+    return `<div class="day-col${isToday ? ' today' : ''}">
+      <div class="day-head">
+        <span class="day-name">${esc(KD.DAY_LABELS_HE[day])}${isToday ? '<span class="today-badge">היום</span>' : ''}</span>
+        <span class="people-pill" title="סועדים ביום זה">👥 ${people}</span>
+      </div>
       ${meals}
     </div>`;
   }).join('');
 
   return `${allergyBanner(house)}
-    <div class="card row between no-print">
-      <div class="row">
-        <button data-act="weekPrev">← שבוע קודם</button>
-        <strong>שבוע ${esc(KD.formatDateHe(weekOf))}</strong>
-        <button data-act="weekNext">שבוע הבא →</button>
-      </div>
-      <button class="primary" data-act="copyLast" ${hasLast ? '' : 'disabled'}
+    <div class="week-bar no-print">
+      <button class="icon-btn" data-act="weekPrev" aria-label="שבוע קודם">→</button>
+      <div class="week-label"><span class="muted">שבוע</span><strong>${esc(KD.formatDateHe(weekOf))}</strong></div>
+      <button class="icon-btn" data-act="weekNext" aria-label="שבוע הבא">←</button>
+      <button class="primary copy-btn" data-act="copyLast" ${hasLast ? '' : 'disabled'}
         title="${hasLast ? 'העתק את תפריט השבוע הקודם' : 'אין תפריט לשבוע הקודם'}">⧉ העתק שבוע קודם</button>
     </div>
     <div class="week-grid">${cols}</div>`;
@@ -214,24 +220,26 @@ function renderDish(day, meal, dish) {
       `<option value="${c}" ${c === ing.category ? 'selected' : ''}>${esc(KD.CATEGORY_LABELS_HE[c])}</option>`).join('');
     const d = `data-day="${day}" data-meal="${meal}" data-dish="${esc(dish.id)}" data-ing="${esc(ing.id)}"`;
     return `<div class="ing">
-      <input value="${esc(ing.name)}" placeholder="מרכיב" data-act="ingName" ${d} />
-      <select data-act="ingCat" ${d}>${opts}</select>
-      <span class="u">
-        <input type="number" min="0" step="${unit === 'g' ? 10 : 0.01}" value="${shown || ''}" placeholder="0" data-act="ingQty" ${d} />
-        <select data-act="ingUnit" ${d}><option value="kg" ${unit === 'kg' ? 'selected' : ''}>ק"ג</option><option value="g" ${unit === 'g' ? 'selected' : ''}>גרם</option></select>
-      </span>
-      <span class="muted" style="font-size:.7rem">לסועד</span>
-      <button class="danger" title="מחק מרכיב" data-act="delIng" ${d}>✕</button>
+      <input class="ing-name" value="${esc(ing.name)}" placeholder="מרכיב" data-act="ingName" ${d} />
+      <div class="ing-meta">
+        <select class="ing-cat" data-act="ingCat" ${d}>${opts}</select>
+        <span class="u">
+          <input type="number" inputmode="decimal" min="0" step="${unit === 'g' ? 10 : 0.01}" value="${shown || ''}" placeholder="0" data-act="ingQty" ${d} />
+          <select data-act="ingUnit" ${d}><option value="kg" ${unit === 'kg' ? 'selected' : ''}>ק"ג</option><option value="g" ${unit === 'g' ? 'selected' : ''}>גרם</option></select>
+        </span>
+        <span class="per-person">לסועד</span>
+        <button class="icon-btn danger" title="מחק מרכיב" data-act="delIng" ${d}>✕</button>
+      </div>
     </div>`;
   }).join('');
   const d = `data-day="${day}" data-meal="${meal}" data-dish="${esc(dish.id)}"`;
   return `<div class="dish">
     <div class="dish-title">
-      <input value="${esc(dish.name)}" placeholder="שם המנה" data-act="dishName" ${d} />
-      <button class="danger" title="מחק מנה" data-act="delDish" ${d}>✕</button>
+      <input class="dish-name" value="${esc(dish.name)}" placeholder="שם המנה" data-act="dishName" ${d} />
+      <button class="icon-btn danger" title="מחק מנה" data-act="delDish" ${d}>🗑</button>
     </div>
     ${ings}
-    <button class="ghost" style="font-size:.8rem" data-act="addIng" ${d}>＋ מרכיב</button>
+    <button class="add-row ghost" data-act="addIng" ${d}>＋ מרכיב</button>
   </div>`;
 }
 
@@ -289,7 +297,7 @@ function renderStock(house) {
   const active = state.stockCat || 'groceries';
   state.stockCat = active;
   const tabs = KD.CATEGORIES.map((c) =>
-    `<button data-act="stockCat" data-cat="${c}" aria-current="${active === c}">${esc(KD.CATEGORY_LABELS_HE[c])}</button>`).join('');
+    `<button data-act="stockCat" data-cat="${c}" aria-current="${active === c}"><span class="cat-dot cat-${c}" aria-hidden="true"></span>${esc(KD.CATEGORY_LABELS_HE[c])}</button>`).join('');
   const items = house.stock.filter((s) => s.category === active);
   const rows = items.length ? items.map((item) => {
     const unit = state.unitPref['stk_' + item.id] || 'kg';
@@ -306,10 +314,10 @@ function renderStock(house) {
 
   return `<div class="card">
     <h2>מלאי — ${esc(house.name)}</h2>
-    <p class="muted">מה קיים במחסן כרגע (בק"ג). הטבח מעדכן ידנית. נחסר מרשימת הקניות.</p>
-    <div class="tabs" style="padding:0;margin:0 0 .8rem">${tabs}</div>
+    <p class="muted">מה קיים במחסן כרגע (בק"ג). מתעדכן ידנית. נחסר מרשימת הקניות.</p>
+    <div class="subtabs">${tabs}</div>
     <table><thead><tr><th>מרכיב</th><th>קטגוריה</th><th>כמות במלאי</th><th></th></tr></thead><tbody>${rows}</tbody></table>
-    <button class="ghost" data-act="stkAdd" data-cat="${active}">＋ הוסף פריט ל${esc(KD.CATEGORY_LABELS_HE[active])}</button>
+    <button class="add-row" data-act="stkAdd" data-cat="${active}" style="margin-top:.7rem">＋ הוסף פריט ל${esc(KD.CATEGORY_LABELS_HE[active])}</button>
   </div>`;
 }
 
@@ -323,21 +331,46 @@ function renderShopping(house) {
   const sections = KD.CATEGORIES.map((c) => {
     const rows = list.byCategory[c].filter((r) => r.toBuyKg > 0);
     if (!rows.length) return '';
-    const trs = rows.map((r) => `<tr><td>${esc(r.name)}</td><td class="num muted">${fmtKg(r.bufferedKg)}</td><td class="num muted">${fmtKg(r.stockKg)}</td><td class="num"><strong>${fmtKg(r.toBuyKg)}</strong></td></tr>`).join('');
-    return `<div class="card"><h3>${esc(KD.CATEGORY_LABELS_HE[c])}</h3>
-      <table><thead><tr><th>מרכיב</th><th>נדרש (+${pct}%)</th><th>במלאי</th><th>לקנות</th></tr></thead><tbody>${trs}</tbody></table></div>`;
+    const items = rows.map((r) => {
+      const key = c + ':' + r.name;
+      const done = state.checked[key] ? ' done' : '';
+      return `<li class="shop-item${done}" data-act="checkItem" data-key="${esc(key)}">
+        <span class="check" aria-hidden="true"></span>
+        <span class="shop-body">
+          <span class="shop-name">${esc(r.name)}</span>
+          <span class="shop-sub muted">נדרש ${fmtKg(r.bufferedKg)} · במלאי ${fmtKg(r.stockKg)}</span>
+        </span>
+        <span class="shop-qty num">${fmtKg(r.toBuyKg)}</span>
+      </li>`;
+    }).join('');
+    return `<section class="card shop-cat">
+      <h3 class="shop-cat-head"><span class="cat-dot cat-${c}" aria-hidden="true"></span>${esc(KD.CATEGORY_LABELS_HE[c])}
+        <span class="count-badge">${rows.length}</span></h3>
+      <ul class="shop-list">${items}</ul>
+    </section>`;
   }).join('');
+
+  const alg = house.allergies.filter((a) => a.name);
+  const printHead = `<div class="print-only print-head">
+      <h1>רשימת קניות — ${esc(house.name)}</h1>
+      <div>שבוע ${esc(KD.formatDateHe(weekOf))} · כולל תוספת ${pct}% · בניכוי מלאי קיים</div>
+      ${alg.length ? `<div class="print-alg">⚠️ אלרגיות: ${alg.map((a) => esc(a.name) + ' ×' + (Number(a.count) || 0)).join(', ')}</div>` : ''}
+    </div>`;
 
   const nothing = list.lines.every((l) => l.toBuyKg === 0);
   return `${allergyBanner(house)}
-    <div class="card row between no-print">
-      <div><h2 style="margin:0">רשימת קניות</h2><span class="muted">שבוע ${esc(KD.formatDateHe(weekOf))} · כולל תוספת ${pct}% · בניכוי מלאי קיים</span></div>
-      <div class="row">
-        <button class="primary" data-act="waShare">📱 שלח בוואטסאפ</button>
+    <div class="screen-head shop-head no-print">
+      <div class="screen-title"><h2>רשימת קניות</h2>
+        <span class="muted">שבוע ${esc(KD.formatDateHe(weekOf))} · כולל תוספת ${pct}% · בניכוי מלאי</span></div>
+      <div class="head-actions">
+        <button class="primary" data-act="waShare">📱 וואטסאפ</button>
         <button data-act="printList">🖨️ הדפס</button>
       </div>
     </div>
-    ${nothing ? '<div class="card">אין מה לקנות — המלאי מכסה את כל הצרכים 🎉</div>' : sections}`;
+    ${printHead}
+    ${nothing
+      ? emptyState('🎉', 'אין מה לקנות', 'המלאי מכסה את כל הצרכים של השבוע.')
+      : sections}`;
 }
 
 function shoppingListText(house) {

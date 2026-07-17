@@ -7,6 +7,37 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Changed — mobile-first UI redesign (cooks on phones)
+
+Redesigned the interface for its real use: house cooks on **their phones** in a
+kitchen (admin also on desktop). Hebrew RTL throughout. Vanilla CSS only — no
+framework, no build step.
+
+- **Big touch targets**: buttons and inputs are ≥48px tall with generous
+  spacing; the shopping-list rows and tab targets are larger still.
+- **Bottom tab bar on phones**: fixed to the bottom with icon-over-label items
+  and an obvious active state (green, top indicator). On desktop it becomes a
+  pill row under the house switcher.
+- **House switcher** is a horizontal, scrollable chip row (the active house is a
+  filled green chip) — replaces the old dropdown.
+- **Typography**: 17px base on mobile / 18px on desktop, heavier headings,
+  tabular-nums for quantities and ₪ so numbers read at a glance; numeric inputs
+  render LTR so `0.12` / `1500` don't reorder in RTL.
+- **One accent system** refined around the existing brand green, plus per-meal
+  accent stripes (breakfast/lunch/dinner) and per-category color dots
+  (groceries/vegetables/fruits/meat/dry) for fast scanning.
+- **Weekly menu** stacks day cards vertically on phones (multi-column on
+  desktop); **today is highlighted** (ring + "היום" badge). Ingredient editing
+  is a touch-friendly two-row layout.
+- **Shopping list for in-store use**: category sections with color dots and
+  counts, **prominent to-buy quantities**, and **tap-to-check-off** rows
+  (transient). A dedicated **print stylesheet** renders it black-on-white with
+  check squares and no app chrome.
+- **Friendly empty states** (icon + Hebrew hint) instead of blank screens.
+
+Verified in a headless browser at 380px (phone) and desktop widths across menu,
+shopping, stock, headcount, budget, and the all-houses view.
+
 ### Changed — one open app, no login for anyone (auth removed entirely)
 
 Simplified the access model to its final form: **ONE app, ONE URL, NO login.**
