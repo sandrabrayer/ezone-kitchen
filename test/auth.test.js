@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('crypto');
-const { signToken, verifyToken, checkPin } = require('../lib/auth');
+const { signToken, verifyToken, checkCode, normalizeCode } = require('../lib/auth');
 
 const SECRET = 's'.repeat(32);
 
@@ -89,11 +89,27 @@ test('verifyToken uses payload prefix "kitchen:" (other apps\' tokens are invali
   assert.equal(verifyToken(SECRET, tokenFor(`managers:admin::${exp}`)), null);
 });
 
-test('checkPin: exact match only, timing-safe path', () => {
-  assert.equal(checkPin('1234', '1234'), true);
-  assert.equal(checkPin('1235', '1234'), false);
-  assert.equal(checkPin('123', '1234'), false);
-  assert.equal(checkPin('', ''), false); // empty expected PIN never authenticates
-  assert.equal(checkPin(null, '1234'), false);
-  assert.equal(checkPin('1234', null), false);
+test('checkCode: case-insensitive, whitespace-trimming, timing-safe', () => {
+  // Word codes: case and surrounding whitespace must not matter.
+  assert.equal(checkCode('ramot', 'RAMOT'), true);
+  assert.equal(checkCode('RAMOT', 'RAMOT'), true);
+  assert.equal(checkCode('  Ramot  ', 'RAMOT'), true);
+  assert.equal(checkCode('RaMoT', 'ramot'), true);
+  // But the code itself must still match.
+  assert.equal(checkCode('ramotx', 'RAMOT'), false);
+  assert.equal(checkCode('ramo', 'RAMOT'), false);
+  assert.equal(checkCode('pardes', 'RAMOT'), false);
+  // Empty / missing never authenticates.
+  assert.equal(checkCode('', ''), false);
+  assert.equal(checkCode('   ', 'RAMOT'), false);
+  assert.equal(checkCode('RAMOT', ''), false);
+  assert.equal(checkCode(null, 'RAMOT'), false);
+  assert.equal(checkCode('RAMOT', null), false);
+});
+
+test('normalizeCode lower-cases and trims', () => {
+  assert.equal(normalizeCode('  RaMoT '), 'ramot');
+  assert.equal(normalizeCode(''), '');
+  assert.equal(normalizeCode(null), '');
+  assert.equal(normalizeCode(undefined), '');
 });

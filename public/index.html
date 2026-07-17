@@ -20,8 +20,11 @@
       <div class="login-brand">איזון · מטבח</div>
       <h2 id="loginTitle">כניסה</h2>
       <p class="login-sub">הזינו קוד גישה</p>
-      <input id="loginPin" class="login-pin" type="password" inputmode="numeric"
-             autocomplete="one-time-code" maxlength="6" dir="ltr" aria-label="קוד גישה" />
+      <!-- Word codes (not digits): force Latin input, no auto-capitalise, so a
+           Hebrew-keyboard user types the Latin code as stored. -->
+      <input id="loginPin" class="login-pin" type="text" inputmode="text"
+             autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"
+             maxlength="32" dir="ltr" aria-label="קוד גישה" placeholder="קוד גישה" />
       <button id="loginBtn" class="login-btn" type="button">כניסה</button>
       <div id="loginError" class="login-error" role="alert" hidden></div>
     </div>

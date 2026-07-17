@@ -7,6 +7,36 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Changed — login codes are words (case-insensitive), not digit PINs
+
+Login codes are now **words** matched **case-insensitively** with surrounding
+whitespace ignored — for `ADMIN_PIN` and `COOK_PINS` alike, so `ramot`, `RAMOT`,
+and `" Ramot "` all match a stored `RAMOT`.
+
+- `lib/auth.js`: replaced the exact-match `checkPin` with `checkCode` (normalise
+  = trim + lower-case, then constant-time compare) and `normalizeCode`; server
+  login and cook-code matching use it.
+- `server.js`: the ADMIN-vs-cook collision guard and a new duplicate-code guard
+  compare **normalised** codes, so two codes can't differ only by case/spacing.
+- Login input (`public/index.html`) is now a Latin text field
+  (`inputmode="text"`, `autocapitalize="none"`, `autocorrect/​spellcheck` off,
+  `dir="ltr"`) instead of a numeric PIN pad, so Hebrew-keyboard users type the
+  Latin code as stored.
+- `.env.example` + docs show word codes. Tests:
+  `test/login-word-codes.test.js` (case/whitespace variants for admin + cook)
+  and the `checkCode` cases in `test/auth.test.js`.
+
+### Security — regression guard: every /api route rejects unauthenticated read AND write
+
+Added `test/no-auth-guard.test.js` locking in that `/api/sheets` returns **401**
+for both reads and writes when no valid session token is present (verified
+against a mock upstream that would otherwise serve data, so a bypass can't hide
+behind a 502). Confirmed via test and a cold-profile headless browser that the
+current server enforces auth server-side and the UI shows the login overlay with
+no token — i.e. there is no auth bypass in this codebase. (A production report of
+a bypass points to a stale deployment of the pre-auth scaffold; the remediation
+is to redeploy the current `main`.)
+
 ### Changed — display dates in Israeli DD/MM/YYYY format
 
 Dates showed as raw ISO (e.g. `שבוע 2026-07-12`). Added `KitchenDomain.formatDateHe`

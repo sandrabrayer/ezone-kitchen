@@ -43,11 +43,13 @@ runtimes.
 
 ## Auth (HMAC session, ecosystem standard)
 
-- `POST /api/login` with a PIN (timing-safe compare, per-IP rate limited)
-  returns a token `"<base64url(payload)>.<hmacSha256Hex>"` over the payload
-  `"kitchen:<role>:<houseId>:<expiresAtMs>"`, keyed by `SESSION_SECRET`. The PIN
+- `POST /api/login` with a **word code** (case-insensitive, whitespace-trimmed,
+  timing-safe compare, per-IP rate limited) returns a token
+  `"<base64url(payload)>.<hmacSha256Hex>"` over the payload
+  `"kitchen:<role>:<houseId>:<expiresAtMs>"`, keyed by `SESSION_SECRET`. The code
   decides the role: `ADMIN_PIN` → `admin` (no house); a `COOK_PINS` entry →
-  `cook` bound to that entry's house.
+  `cook` bound to that entry's house. Codes are words (letters), so `ramot`,
+  `RAMOT`, and `" Ramot "` all match a stored `RAMOT`.
 - The token is sent as `Authorization: Bearer <token>` on `/api/sheets` and
   verified server-side (`lib/auth.js`), which returns the `{ role, houseId }`
   claims the proxy enforces against.

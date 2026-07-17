@@ -109,8 +109,8 @@ deploy the Apps Script, then set the four variables.
 
 | Variable             | Purpose                                                        |
 | -------------------- | -------------------------------------------------------------- |
-| `ADMIN_PIN`          | Admin access code — all houses + the budget admin (all-houses) view. |
-| `COOK_PINS`          | JSON map of per-house cook codes, `{"pin":"houseId"}`. Each cook code opens only its own house. Optional. |
+| `ADMIN_PIN`          | Admin access code (a word) — all houses + the budget admin (all-houses) view. Matched case-insensitively. |
+| `COOK_PINS`          | JSON map of per-house cook codes (words), `{"code":"houseId"}`. Each cook code opens only its own house. Case-insensitive. Optional. |
 | `SESSION_SECRET`     | HMAC key for session tokens (≥ 32 chars).                      |
 | `APPS_SCRIPT_URL`    | The Apps Script Web App `/exec` URL. Server-side only.         |
 | `APPS_SCRIPT_SECRET` | Shared secret matching the Apps Script `SHARED_SECRET` prop.   |

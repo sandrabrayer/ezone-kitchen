@@ -119,7 +119,7 @@ th { font-size: 0.85rem; color: var(--muted); }
 .login-card { background: var(--surface); border-radius: 16px; padding: 2rem; width: min(360px, 92vw); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25); text-align: center; }
 .login-brand { color: var(--brand); font-weight: 800; margin-bottom: 0.5rem; }
 .login-sub { color: var(--muted); margin: 0 0 1rem; }
-.login-pin { width: 100%; text-align: center; font-size: 1.4rem; letter-spacing: 0.3em; padding: 0.6rem; margin-bottom: 0.8rem; }
+.login-pin { width: 100%; text-align: center; font-size: 1.3rem; letter-spacing: 0.04em; padding: 0.6rem; margin-bottom: 0.8rem; }
 .login-btn { width: 100%; background: var(--brand); color: #fff; border: none; padding: 0.7rem; border-radius: 10px; font-weight: 700; font-size: 1rem; }
 .login-error { color: var(--danger); margin-top: 0.7rem; font-weight: 600; }
 

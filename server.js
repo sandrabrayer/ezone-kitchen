@@ -19,7 +19,7 @@
 const express = require('express');
 const path = require('path');
 
-const { signToken, verifyToken, checkPin } = require('./lib/auth');
+const { signToken, verifyToken, checkCode, normalizeCode } = require('./lib/auth');
 
 // Sanitise a value coming from an env var. Hosting dashboards (Railway, etc.)
 // commonly introduce a trailing newline/space or wrap the value in quotes when
@@ -70,19 +70,26 @@ function parseCookPins(raw) {
     fatal('COOK_PINS must be a JSON object mapping pin -> houseId');
   }
   const out = {};
+  const seen = new Set(); // normalized codes, to catch case-only duplicates
   for (const rawPin of Object.keys(obj)) {
     // Trim the pin and clean the house id the same way, so a padded env value
-    // still matches the trimmed PIN the browser sends.
+    // still matches the trimmed code the browser sends.
     const pin = String(rawPin).trim();
     const houseId = cleanEnv(obj[rawPin]);
-    if (!pin) fatal('COOK_PINS contains an empty PIN');
+    if (!pin) fatal('COOK_PINS contains an empty code');
     if (!houseId) fatal(`COOK_PINS["${rawPin}"] must be a non-empty house id string`);
     if (houseId.indexOf(':') !== -1) {
       fatal(`COOK_PINS["${rawPin}"] house id must not contain ':'`);
     }
-    if (ADMIN_PIN && pin === ADMIN_PIN) {
-      fatal('A cook PIN must not equal ADMIN_PIN');
+    // Codes match case-insensitively, so collisions must be checked normalized.
+    const norm = normalizeCode(pin);
+    if (ADMIN_PIN && norm === normalizeCode(ADMIN_PIN)) {
+      fatal('A cook code must not equal ADMIN_PIN (case-insensitively)');
     }
+    if (seen.has(norm)) {
+      fatal(`COOK_PINS has two codes that differ only by case/spacing: "${rawPin}"`);
+    }
+    seen.add(norm);
     out[pin] = houseId;
   }
   return out;
@@ -136,13 +143,13 @@ function rateLimitLogin(ip) {
   return entry.count <= LOGIN_MAX;
 }
 
-// Match a submitted PIN against every configured cook code (timing-safe, and
-// without short-circuiting, so the response time does not reveal how many cook
-// codes exist or how close a guess was). Returns the house id or ''.
+// Match a submitted code against every configured cook code (case-insensitive,
+// and without short-circuiting, so the response time does not reveal how many
+// cook codes exist or how close a guess was). Returns the house id or ''.
 function matchCookPin(pin) {
   let houseId = '';
   for (const code of Object.keys(COOK_PINS)) {
-    if (checkPin(pin, code)) houseId = COOK_PINS[code];
+    if (checkCode(pin, code)) houseId = COOK_PINS[code];
   }
   return houseId;
 }
@@ -155,7 +162,7 @@ app.post('/api/login', (req, res) => {
   const pin = String((req.body && req.body.pin) || '');
 
   // Admin code wins if it matches.
-  if (checkPin(pin, ADMIN_PIN)) {
+  if (checkCode(pin, ADMIN_PIN)) {
     const token = signToken(SESSION_SECRET, { role: 'admin', houseId: '' }, SESSION_DAYS);
     return res.json({ token, role: 'admin', houseId: '', expiresInDays: SESSION_DAYS });
   }
