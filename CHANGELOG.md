@@ -7,6 +7,34 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Added — seed the five production houses (idempotent, on load)
+
+The backend now seeds the five real houses on first load, so they don't have to
+be created by hand. Fixed, human-readable ids with Hebrew display names:
+`ramot-hashavim` (רמות השבים), `raanana-asher` (רעננה אשר),
+`caesarea-ofroni` (קיסריה עפרוני), `caesarea-rehab` (קיסריה שיקום),
+`pardes` (פרדס).
+
+- **Idempotent**: `apps-script/Code.gs` seeds only when the `houses` tab is empty
+  (`seedHousesIfEmpty_` in `loadAll_`), inside the existing `LockService` lock —
+  so running twice never duplicates and never clobbers a renamed house. Seeding
+  reuses the existing `saveHouse_` code path.
+- **Single source of truth**: `KitchenDomain.SEED_HOUSES` + the pure
+  `housesToSeed(existing)` helper (`lib/kitchen-domain.js`); Code.gs mirrors the
+  list and a test asserts the two never drift.
+- **Tests**: `test/seed-houses.test.js` — exact ids/names, idempotency (twice →
+  five, never ten), fresh-copy safety, and the Code.gs mirror/guard check.
+
+### Fixed — login always returned 401 (env PIN sanitising)
+
+Production `/api/login` 401'd for the correct `ADMIN_PIN` because the Railway env
+var carried surrounding quotes / trailing whitespace, while the browser sends a
+trimmed PIN; `checkPin`'s exact byte-compare never matched. Sanitise env values
+on startup (`cleanEnv`: trim + strip one matching pair of surrounding quotes),
+applied to `ADMIN_PIN`, `SESSION_SECRET`, `APPS_SCRIPT_URL/SECRET`, and the
+`COOK_PINS` blob / pin keys / house ids. Repro in
+`test/login-env-sanitize.test.js`.
+
 ### Added — separate cook and admin PINs (PIN-gated, server-enforced roles)
 
 Replaced the single `APP_PIN` (and the client-side `cook`/`admin` view toggle,

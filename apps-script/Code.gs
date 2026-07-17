@@ -175,7 +175,29 @@ function saveMenu_(houseId, weekOf, days) {
   return { ok: true };
 }
 
+// The five real houses, with fixed human-readable ids and Hebrew display names.
+// Mirrors KitchenDomain.SEED_HOUSES (lib/kitchen-domain.js); a Node test asserts
+// the two lists never drift.
+var SEED_HOUSES = [
+  { id: 'ramot-hashavim', name: 'רמות השבים' },
+  { id: 'raanana-asher', name: 'רעננה אשר' },
+  { id: 'caesarea-ofroni', name: 'קיסריה עפרוני' },
+  { id: 'caesarea-rehab', name: 'קיסריה שיקום' },
+  { id: 'pardes', name: 'פרדס' }
+];
+
+// Idempotent: seed the five houses only when the houses tab is empty. Runs
+// inside doPost's LockService lock, so concurrent loads can't double-seed; once
+// any house exists this is a no-op, so it never duplicates or clobbers a rename.
+function seedHousesIfEmpty_() {
+  if (readRows_('houses').length > 0) return;
+  for (var i = 0; i < SEED_HOUSES.length; i++) {
+    saveHouse_({ id: SEED_HOUSES[i].id, name: SEED_HOUSES[i].name, weeklyBudget: 0 });
+  }
+}
+
 function loadAll_() {
+  seedHousesIfEmpty_();
   var houses = readRows_('houses');
   var budget = indexBy_(readRows_('budget'), 'houseId');
   var headcount = indexBy_(readRows_('headcount'), 'houseId');

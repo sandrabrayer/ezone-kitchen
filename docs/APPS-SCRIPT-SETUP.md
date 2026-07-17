@@ -63,11 +63,15 @@ Set these environment variables on the Railway service (see
 
 ## 6. Verify
 
-- Open the deployed app, log in with `ADMIN_PIN`, and add a house. Then check the
-  Sheet — a `houses` tab (and others) should appear and fill in.
-- To give a cook access to that house: copy its house id from the admin
-  all-houses view, add `{"<cookPin>":"<houseId>"}` to `COOK_PINS`, redeploy, and
-  that cook code will open only that house.
+- Open the deployed app and log in with `ADMIN_PIN`. On the **first** load, when
+  the `houses` tab is empty, the backend seeds the five production houses
+  automatically (`ramot-hashavim`, `raanana-asher`, `caesarea-ofroni`,
+  `caesarea-rehab`, `pardes`). Then check the Sheet — a `houses` tab (and others)
+  should appear and fill in. The seed is idempotent: it only runs on an empty
+  tab, so it never duplicates and never overwrites a house you later rename.
+- To give a cook access to a house: copy its house id from the admin all-houses
+  view (or use a seeded id above), add `{"<cookPin>":"<houseId>"}` to
+  `COOK_PINS`, redeploy, and that cook code will open only that house.
 - Direct `GET` on the `/exec` URL returns `{"ok":true,"service":"ezone-kitchen",
   "note":"POST only"}` — that confirms it's live. All real calls are POST and go
   through the server.
