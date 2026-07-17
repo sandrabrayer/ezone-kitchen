@@ -70,6 +70,14 @@ app.get('/lib/kitchen-domain.js', (_req, res) => {
 
 app.get('/healthz', (_req, res) => res.json({ ok: true, ts: Date.now() }));
 
+// ---- TEMPORARY: /theme-lab palette playground (dev-only, will be deleted) ----
+// Not linked from any menu; noindex. Purely static — no app behaviour changes.
+app.get('/theme-lab', (_req, res) => {
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  res.setHeader('Cache-Control', 'no-store');
+  res.sendFile(path.join(__dirname, 'public', 'theme-lab.html'));
+});
+
 // ---- Apps Script proxy (POST-only; the body carries {action, ...}) ----
 // No user auth: the app is open. The shared secret is injected server-side so a
 // client can never override or supply it — it stays server-only.

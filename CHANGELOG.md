@@ -7,6 +7,30 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Added — TEMPORARY `/theme-lab` palette playground (dev-only, will be deleted)
+
+A throwaway design tool to choose the final palette, shipped so it can be viewed
+on the live deploy. **Not linked from any menu** (direct URL only), `noindex`
+(meta + `X-Robots-Tag`), with a clear banner "מעבדת עיצוב — זמני, יימחק". No app
+behaviour changes — it's a self-contained static page plus one `GET /theme-lab`
+route in `server.js`.
+
+- **Mocks** (realistic Hebrew data): a weekly-menu day card (one day, 3 meals,
+  dishes + category-colored ingredient chips, headcount + "היום" badge); a
+  shopping list with all 5 categories (dots, count badges, checked/unchecked
+  rows, quantities); a budget row incl. an over-budget (red) case; and a
+  house-color strip showing all 5 houses' chips + header side by side.
+- **Live controls** (client-only, no persistence): page background (warm white →
+  greys → near-black); ~8 muted→neon swatches each for the 3 meals, 5 shopping
+  categories, and 5 houses; scheme toggles (emphasis by meal / category / both,
+  and where house color applies: header+chips / whole-page tint / off); element
+  toggles (filled vs outlined chips, shadow strength). Red is reserved for
+  danger/over-budget and excluded from the swatch rows.
+- **Readout** box prints all selected hexes + modes as screenshot-ready text.
+
+The follow-up PR will apply the chosen palette app-wide and **delete `/theme-lab`
+in the same PR** (`public/theme-lab.html` + the route).
+
 ### Changed — more vivid palette (emerald + warm amber accent)
 
 Refreshed the color system so it reads alive rather than muted, without becoming
