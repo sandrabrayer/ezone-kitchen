@@ -225,7 +225,7 @@ function renderMenu(house) {
     <div class="card row between no-print">
       <div class="row">
         <button data-act="weekPrev">← שבוע קודם</button>
-        <strong>שבוע ${esc(weekOf)}</strong>
+        <strong>שבוע ${esc(KD.formatDateHe(weekOf))}</strong>
         <button data-act="weekNext">שבוע הבא →</button>
       </div>
       <button class="primary" data-act="copyLast" ${hasLast ? '' : 'disabled'}
@@ -359,7 +359,7 @@ function renderShopping(house) {
   const nothing = list.lines.every((l) => l.toBuyKg === 0);
   return `${allergyBanner(house)}
     <div class="card row between no-print">
-      <div><h2 style="margin:0">רשימת קניות</h2><span class="muted">שבוע ${esc(weekOf)} · כולל תוספת ${pct}% · בניכוי מלאי קיים</span></div>
+      <div><h2 style="margin:0">רשימת קניות</h2><span class="muted">שבוע ${esc(KD.formatDateHe(weekOf))} · כולל תוספת ${pct}% · בניכוי מלאי קיים</span></div>
       <div class="row">
         <button class="primary" data-act="waShare">📱 שלח בוואטסאפ</button>
         <button data-act="printList">🖨️ הדפס</button>
@@ -374,7 +374,7 @@ function shoppingListText(house) {
   const list = KD.buildShoppingList(week, house.headcount, house.stock);
   const lines = [];
   lines.push('🛒 רשימת קניות – ' + house.name);
-  lines.push('שבוע ' + weekOf);
+  lines.push('שבוע ' + KD.formatDateHe(weekOf));
   const alg = house.allergies.filter((a) => a.name).map((a) => `${a.name} ×${Number(a.count) || 0}`);
   if (alg.length) lines.push('⚠️ אלרגיות: ' + alg.join(', '));
   lines.push('');
@@ -402,20 +402,20 @@ function renderBudget(house) {
 
   const weekPurchases = house.purchases.filter((p) => p.weekOf === weekOf);
   const purchaseRows = weekPurchases.length ? weekPurchases.map((p) => `<tr>
-      <td class="muted">${esc(p.date || '')}</td><td class="num">${fmtCurrency(p.amount)}</td><td>${esc(p.note || '')}</td>
+      <td class="muted">${esc(KD.formatDateHe(p.date || ''))}</td><td class="num">${fmtCurrency(p.amount)}</td><td>${esc(p.note || '')}</td>
       <td><button class="danger" data-act="purDel" data-id="${esc(p.id)}">מחק</button></td></tr>`).join('') : '';
 
   const priceRows = house.prices.length ? house.prices.map((p) => `<tr>
       <td>${esc(p.name)}</td><td>${esc(KD.CATEGORY_LABELS_HE[p.category] || p.category)}</td>
       <td><input type="number" min="0" value="${p.pricePerKg}" data-act="prcVal" data-name="${esc(p.name)}" data-cat="${esc(p.category)}" style="width:90px" /></td>
-      <td class="muted">${esc(p.updatedAt || '')}</td></tr>`).join('') : `<tr><td colspan="4" class="muted">אין מחירים. הוסיפו מחיר למרכיב שמופיע בתפריט.</td></tr>`;
+      <td class="muted">${esc(KD.formatDateHe(p.updatedAt || ''))}</td></tr>`).join('') : `<tr><td colspan="4" class="muted">אין מחירים. הוסיפו מחיר למרכיב שמופיע בתפריט.</td></tr>`;
 
   const missing = Array.from(new Set(estimate.missingPrices));
 
   return `<div class="card">
       <div class="row between"><h2 style="margin:0">תקציב — ${esc(house.name)}</h2>
         <label class="muted">תקציב שבועי: <input type="number" min="0" value="${house.weeklyBudget || ''}" data-act="weeklyBudget" style="width:110px" /></label></div>
-      <p class="muted">שבוע ${esc(weekOf)}</p>
+      <p class="muted">שבוע ${esc(KD.formatDateHe(weekOf))}</p>
       <div class="stat-grid">
         <div class="stat"><div class="label">תקציב</div><div class="value num">${fmtCurrency(summary.weeklyBudget)}</div></div>
         <div class="stat"><div class="label">הערכה (מהתפריט)</div><div class="value num">${fmtCurrency(summary.estimated)}</div></div>
@@ -471,7 +471,7 @@ function renderAdmin() {
 
   return `<div class="card">
     <h2>מבט מנהל — כל הבתים</h2>
-    <p class="muted">שבוע ${esc(weekOf)}</p>
+    <p class="muted">שבוע ${esc(KD.formatDateHe(weekOf))}</p>
     <p class="muted" style="font-size:.75rem">💡 המזהה שמתחת לשם הבית הוא ה־house id — השתמשו בו כדי לשייך קוד טבח/ית לבית ב־<code>COOK_PINS</code>.</p>
     <table>
       <thead><tr><th>בית</th><th>סועדים (בסיס)</th><th>תקציב</th><th>הערכה</th><th>בפועל</th><th>מול תקציב</th><th></th></tr></thead>

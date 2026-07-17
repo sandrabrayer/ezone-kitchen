@@ -7,6 +7,16 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Changed — display dates in Israeli DD/MM/YYYY format
+
+Dates showed as raw ISO (e.g. `שבוע 2026-07-12`). Added `KitchenDomain.formatDateHe`
+(display-only: ISO `YYYY-MM-DD` → `DD/MM/YYYY`, non-ISO/empty passed through
+unchanged) and applied it everywhere a date is shown — week header, shopping-list
+subtitle, printed/WhatsApp shopping list, and budget entries (purchase dates and
+price "updated" dates). ISO strings remain the internal/storage format and the
+week keys; this is formatting at render time only. Tested in
+`test/format-date.test.js`.
+
 ### Added — seed the five production houses (idempotent, on load)
 
 The backend now seeds the five real houses on first load, so they don't have to
