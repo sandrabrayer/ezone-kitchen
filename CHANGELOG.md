@@ -7,6 +7,22 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Changed — app title renamed איזון · מטבח → איזון · CHEF
+
+Rebranded the app's display title. "CHEF" is Latin inside the RTL header, so the
+bidi is handled so it reads **איזון · CHEF** (not CHEF · איזון).
+
+- **`public/index.html`**: the app-bar brand wraps the Latin word in `<bdi>`
+  (`איזון · <bdi>CHEF</bdi>`) so it stays isolated LTR in the RTL header; the
+  `<title>` and `<meta name="description">` now read `איזון · CHEF` (Hebrew leads,
+  so the plain-text title renders right-to-left correctly).
+- **PWA manifest**: added `public/manifest.webmanifest` (there wasn't one) with
+  `name`/`short_name` `איזון · CHEF`, `"dir": "rtl"`, `"lang": "he"`, the app
+  theme/background colors, and the existing favicon; linked from `index.html`.
+
+The English project name (`ezone kitchen` in the README/repo) is unchanged — this
+is the in-app Hebrew display title only.
+
 ### Changed — final palette applied app-wide; `/theme-lab` removed; house rename
 
 Applied the palette chosen in the theme lab, removed the temporary lab, and
