@@ -108,6 +108,54 @@ async function loadState() {
   }
 }
 
+/* ============================ house theming ============================ */
+/* Each house tints the app bar + its active switcher chip + a subtle page wash
+   with its own color (chosen in the theme lab). A house without a mapped color
+   (e.g. a newly added one) falls back to the brand green. */
+const HOUSE_COLORS = {
+  'ramot-hashavim': '#37cabe',
+  'raanana-asher': '#497ead',
+  'caesarea-ofroni': '#6e519e',
+  'caesarea-rehab': '#ad9949',
+  'pardes': '#49ad59',
+};
+const BRAND_GREEN = '#0b8457';
+const PAGE_BG = '#e2dbcc';
+
+function hexLum(hex) {
+  const c = String(hex).replace('#', '');
+  if (!/^[0-9a-f]{6}$/i.test(c)) return 0.5;
+  const v = [0, 2, 4].map((i) => {
+    let x = parseInt(c.substr(i, 2), 16) / 255;
+    return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+}
+// Pick #fff or near-black — whichever has more WCAG contrast against the color.
+function readableInk(hex) {
+  const L = hexLum(hex);
+  const white = 1.05 / (L + 0.05);
+  const dark = (L + 0.05) / (hexLum('#14231c') + 0.05);
+  return white >= dark ? '#ffffff' : '#14231c';
+}
+// t of a mixed over b (both #rrggbb) → solid hex.
+function mixHex(a, b, t) {
+  const pa = a.replace('#', ''), pb = b.replace('#', '');
+  const m = (i) => {
+    const x = Math.round(parseInt(pa.substr(i, 2), 16) * t + parseInt(pb.substr(i, 2), 16) * (1 - t));
+    return x.toString(16).padStart(2, '0');
+  };
+  return '#' + m(0) + m(2) + m(4);
+}
+function applyHouseTheme() {
+  const h = activeHouse();
+  const color = (h && HOUSE_COLORS[h.id]) || BRAND_GREEN;
+  const root = document.documentElement.style;
+  root.setProperty('--house-active', color);
+  root.setProperty('--house-ink', readableInk(color));
+  root.setProperty('--house-wash', mixHex(color, PAGE_BG, 0.10)); // subtle page wash
+}
+
 /* ============================ rendering ============================ */
 /* Short labels + an icon so the tab bar fits a narrow phone screen. The
    all-houses view is a tab like any other — the app is open to everyone. */
@@ -138,6 +186,7 @@ function renderChrome() {
 }
 
 function render() {
+  applyHouseTheme();
   renderChrome();
   const screen = $('#screen');
   if (state.tab === 'admin') { screen.innerHTML = renderAdmin(); return; }
