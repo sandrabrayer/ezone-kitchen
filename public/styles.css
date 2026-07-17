@@ -20,16 +20,16 @@
   --accent-strong: #b45309;  /* amber-brown: ₪ figures on white — 5:1 */
   --accent-tint: #fef3c7;
 
-  /* neutrals — a hair of warmth + stronger depth from shadows */
-  --bg: #edf1ea;
+  /* neutrals — warm background chosen in the theme lab (bg level 13) */
+  --bg: #e2dbcc;
   --surface: #ffffff;
-  --surface-2: #f5f9f3;
-  --border: #dde5df;
-  --border-strong: #c8d4cd;
+  --surface-2: #f7f4ec;
+  --border: #d9d2c2;
+  --border-strong: #c6bdaa;
   --text: #14231c;
-  --muted: #566a61;
+  --muted: #5c5a4e;
 
-  /* status */
+  /* status — RED IS RESERVED for over-budget / danger (never a house/meal/cat) */
   --danger: #dc2626;
   --danger-tint: #fdecec;
   --warn: #92400e;           /* amber-800 text — ~7:1 on the warn bg */
@@ -37,17 +37,29 @@
   --warn-border: #fcd34d;
   --ok: #0b8457;
 
-  /* category accents — vivid + clearly distinct hues */
-  --cat-groceries: #ca8a04;  /* gold */
-  --cat-vegetables: #16a34a; /* green */
-  --cat-fruits: #f97316;     /* orange */
-  --cat-meat: #dc2626;       /* red */
-  --cat-dry: #7c3aed;        /* violet */
+  /* category accents — final (theme lab, emphasis=meal) */
+  --cat-groceries: #edbb26;  /* gold */
+  --cat-vegetables: #2be277; /* green */
+  --cat-fruits: #ed8326;     /* orange */
+  --cat-meat: #d63191;       /* magenta (red is reserved) */
+  --cat-dry: #862be2;        /* violet */
 
-  /* meal accents — distinct warm→cool */
-  --meal-breakfast: #f59e0b; /* amber */
-  --meal-lunch: #16a34a;     /* green */
-  --meal-dinner: #6366f1;    /* indigo */
+  /* meal accents — final (theme lab) */
+  --meal-breakfast: #e2a52b; /* amber */
+  --meal-lunch: #2be286;     /* green */
+  --meal-dinner: #3f31d6;    /* indigo */
+
+  /* per-house accents — final (theme lab). Applied to the app bar + active
+     house chip + a subtle page wash for the SELECTED house (see app.js). */
+  --house-ramot-hashavim: #37cabe;
+  --house-raanana-asher: #497ead;
+  --house-caesarea-ofroni: #6e519e;
+  --house-caesarea-rehab: #ad9949;
+  --house-pardes: #49ad59;
+  /* dynamic — app.js sets these to the active house each render */
+  --house-active: var(--brand);
+  --house-ink: #ffffff;
+  --house-wash: var(--bg);
 
   --radius: 14px;
   --radius-sm: 10px;
@@ -62,9 +74,10 @@
 html { -webkit-text-size-adjust: 100%; }
 html, body { margin: 0; min-height: 100%; }
 body {
-  background: var(--bg);
+  background: var(--house-wash);
   color: var(--text);
   direction: rtl;
+  transition: background 0.25s;
   font-family: 'Heebo', 'Segoe UI', system-ui, -apple-system, sans-serif;
   font-size: 17px;
   line-height: 1.5;
@@ -146,31 +159,33 @@ input::placeholder { color: #9aa8a1; }
   padding: 1rem 0.9rem calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 1rem);
 }
 
-/* app bar */
+/* app bar — tinted with the SELECTED house's color */
 .appbar {
   position: sticky; top: 0; z-index: 30;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
+  background: var(--house-active);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.10);
   box-shadow: var(--shadow);
+  transition: background 0.25s;
 }
 .appbar-inner {
   min-height: var(--appbar-h);
   max-width: 1100px; margin: 0 auto; padding: 0.4rem 0.9rem;
   display: flex; align-items: center; gap: 0.7rem;
 }
-.brand { display: flex; align-items: center; gap: 0.5rem; font-weight: 900; font-size: 1.15rem; color: var(--brand); }
+.brand { display: flex; align-items: center; gap: 0.5rem; font-weight: 900; font-size: 1.15rem; color: var(--house-ink); }
 .brand img { display: block; }
 .spacer { flex: 1; }
-.status { font-size: 0.85rem; white-space: nowrap; }
+.status { font-size: 0.85rem; white-space: nowrap; color: var(--house-ink); opacity: 0.85; }
 
-/* house switcher (chips) */
+/* house switcher (chips) — sits on the subtle house page wash */
 .house-switcher {
   position: sticky; top: var(--appbar-h); z-index: 20;
-  background: var(--bg);
+  background: var(--house-wash);
   display: flex; gap: 0.5rem;
   padding: 0.6rem 0.9rem;
   overflow-x: auto; -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
+  transition: background 0.25s;
 }
 .house-switcher::-webkit-scrollbar { display: none; }
 .house-switcher[hidden] { display: none; }
@@ -182,7 +197,8 @@ input::placeholder { color: #9aa8a1; }
   background: var(--surface); border: 1.5px solid var(--border-strong);
   font-weight: 700; color: var(--text);
 }
-.house-chip[aria-current='true'] { background: var(--brand); border-color: var(--brand); color: #fff; box-shadow: 0 2px 8px rgba(11, 132, 87, 0.3); }
+/* the ACTIVE house chip takes that house's own color */
+.house-chip[aria-current='true'] { background: var(--house-active); border-color: var(--house-active); color: var(--house-ink); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18); }
 .house-chip.add { color: var(--brand-strong); font-size: 1.3rem; padding: 0.2rem 0.9rem; }
 
 /* ---------------- bottom tab bar ---------------- */
@@ -290,7 +306,8 @@ input::placeholder { color: #9aa8a1; }
 .today-badge { background: var(--accent-gold); color: #3a2a00; font-size: 0.7rem; font-weight: 800; padding: 0.1rem 0.5rem; border-radius: 999px; box-shadow: 0 0 0 1px rgba(180, 83, 9, 0.25); }
 .day-col.today .people-pill { background: rgba(255,255,255,0.25); color: #fff; }
 
-.meal-block { padding: 0.7rem 0.9rem; border-top: 1px solid var(--border); border-inline-start: 4px solid var(--border); }
+/* emphasis=meal: meal stripe is the dominant accent on the day card */
+.meal-block { padding: 0.7rem 0.9rem; border-top: 1px solid var(--border); border-inline-start: 6px solid var(--border); }
 .meal-block.meal-breakfast { border-inline-start-color: var(--meal-breakfast); }
 .meal-block.meal-lunch { border-inline-start-color: var(--meal-lunch); }
 .meal-block.meal-dinner { border-inline-start-color: var(--meal-dinner); }

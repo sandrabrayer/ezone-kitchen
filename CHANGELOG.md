@@ -7,6 +7,30 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Changed — final palette applied app-wide; `/theme-lab` removed; house rename
+
+Applied the palette chosen in the theme lab, removed the temporary lab, and
+renamed one house.
+
+- **Palette** (`public/styles.css` tokens): warm background `#e2dbcc`; meals
+  breakfast `#e2a52b` · lunch `#2be286` · dinner `#3f31d6`; categories groceries
+  `#edbb26` · vegetables `#2be277` · fruits `#ed8326` · meat `#d63191` · dry
+  `#862be2`; per-house ramot-hashavim `#37cabe` · raanana-asher `#497ead` ·
+  caesarea-ofroni `#6e519e` · caesarea-rehab `#ad9949` · pardes `#49ad59`. Filled
+  chips, soft shadow. **Red `#dc2626` stays reserved** for over-budget/danger and
+  is used for no house/meal/category.
+- **Per-house page tint** (`houseColor=page`): the **selected** house colors the
+  app bar, its active switcher chip, and a subtle page wash. `app.js`
+  (`applyHouseTheme`) computes a WCAG-readable ink and the wash per house; a house
+  with no mapped color (e.g. a newly added one) falls back to the brand green.
+- **emphasis=meal**: the day-card meal stripe is the dominant accent (6px).
+- **Removed** the temporary `/theme-lab` page (`public/theme-lab.html`) and its
+  `server.js` route.
+- **Renamed** the `caesarea-rehab` display name to **קיסריה ריהאב** (was
+  קיסריה שיקום) in `lib/kitchen-domain.js` `SEED_HOUSES`, the `apps-script/Code.gs`
+  mirror, and `test/seed-houses.test.js`. **House id `caesarea-rehab` unchanged**
+  (the live Sheet value was updated separately).
+
 ### Added — TEMPORARY `/theme-lab` palette playground (dev-only, will be deleted)
 
 A throwaway design tool to choose the final palette, shipped so it can be viewed
@@ -194,7 +218,7 @@ week keys; this is formatting at render time only. Tested in
 The backend now seeds the five real houses on first load, so they don't have to
 be created by hand. Fixed, human-readable ids with Hebrew display names:
 `ramot-hashavim` (רמות השבים), `raanana-asher` (רעננה אשר),
-`caesarea-ofroni` (קיסריה עפרוני), `caesarea-rehab` (קיסריה שיקום),
+`caesarea-ofroni` (קיסריה עפרוני), `caesarea-rehab` (קיסריה ריהאב),
 `pardes` (פרדס).
 
 - **Idempotent**: `apps-script/Code.gs` seeds only when the `houses` tab is empty

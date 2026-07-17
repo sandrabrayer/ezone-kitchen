@@ -10,7 +10,7 @@ const EXPECTED = [
   { id: 'ramot-hashavim', name: 'רמות השבים' },
   { id: 'raanana-asher', name: 'רעננה אשר' },
   { id: 'caesarea-ofroni', name: 'קיסריה עפרוני' },
-  { id: 'caesarea-rehab', name: 'קיסריה שיקום' },
+  { id: 'caesarea-rehab', name: 'קיסריה ריהאב' },
   { id: 'pardes', name: 'פרדס' },
 ];
 
