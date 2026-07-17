@@ -1,39 +1,33 @@
 # Architecture
 
 ezone-kitchen follows the **E-Zone ecosystem standard** (same shape as
-`ezone-managers` / `ezone-staffing`): vanilla-JS frontend, Node/Express host
-with HMAC session auth, Google Apps Script + Google Sheets backend. **No build
-step.**
+`ezone-managers` / `ezone-staffing`): vanilla-JS frontend, Node/Express host,
+Google Apps Script + Google Sheets backend. **No build step.** The app is
+**open** — no user login.
 
 ## Data flow
 
 ```
 Browser (public/)                     Node/Express (server.js)          Google
 ──────────────────                    ────────────────────────         ────────
-cook: POST /h/<id>/api/sheets ──────▶ pin house from the URL path (no login)
-      { action, ... }                  │
-admin login: POST /api/login  ──────▶ checkCode (timing-safe)
-                              ◀──────  { token }  (HMAC session)
-admin data: POST /api/sheets  ──────▶ requireAdmin (verify Bearer token)
-      { action, ... } + Bearer         │  inject server-only shared secret
+POST /api/sheets              ──────▶ (no user auth)
+     { action, ... }                   │  inject server-only shared secret
                                        └────────▶ POST Apps Script /exec ──▶ doPost
                                                    (verify SHARED_SECRET)     │
                               ◀──────────────────  JSON  ◀───────────────────  Sheet tabs
 ```
 
-Key property: the Apps Script `/exec` URL and all secrets are **server-side
-only**. The browser never sees them; it only ever holds a short-lived HMAC
-session token. This is why data can be shared across users/devices while the
-frontend stays a dumb static bundle.
+Key property: the Apps Script `/exec` URL and the shared secret are **server-side
+only**. The browser never sees them. This is why data can be shared across
+users/devices while the frontend stays a dumb static bundle.
 
 ## Layers
 
 ```
 public/app.js       vanilla views + state + API client + debounced saves
-public/index.html   RTL shell, admin login overlay
+public/index.html   RTL shell (no login — open app)
 lib/kitchen-domain.js  pure domain logic — UMD, shared by browser AND tests
-lib/auth.js         HMAC session auth (admin token) — SERVER ONLY, never served over HTTP
-server.js           Express: static, /api/login, /h/<id>/api/sheets (cook) + /api/sheets (admin) proxy, fail-closed
+server.js           Express: static + /api/sheets proxy (no user auth), fail-closed on backend config
 apps-script/Code.gs Sheets CRUD, POST-only, shared-secret gated, LockService
 ```
 
@@ -42,49 +36,22 @@ nothing (no DOM, no network), which is what makes the 20% buffer, aggregation,
 stock subtraction and budget math trivially testable and identical in both
 runtimes.
 
-## Auth & access
+## Access & the shared secret
 
-Two surfaces, two mechanisms:
+**One app, one URL, no login.** Opening the app shows the house switcher and
+every tab (menu, headcount, allergies, stock, shopping list, budget, all-houses)
+to every visitor. There are no roles, tokens, or login screen, and no auth env
+vars.
 
-### Cooks — the URL is the access (no login)
+The **only** secret is `APPS_SCRIPT_SECRET`, a server→Apps Script shared secret
+injected by the `/api/sheets` proxy (after the client body, so a client can
+never override it). It is **not a user login** — it proves a write came from
+this server, so a stranger who discovers the `/exec` URL cannot write to the
+Sheet directly. It stays server-side only; the browser never sees it.
 
-Each house has a dedicated URL, `/h/<houseId>` (e.g. `/h/ramot-hashavim`).
-Opening it goes straight into that one house in **cook scope** — locked to it
-(no house switcher, no add-house, no all-houses view). There is no cook login and
-no per-house secret: the URL itself is the capability, handed to that house's
-cook.
-
-The house is pinned **server-side from the URL path**, the way a cook session
-token used to carry it. The cook API is `POST /h/<houseId>/api/sheets` (no
-token), and the proxy enforces "own house only":
-
-- a cook's request body has its house reference pinned to the URL's `houseId`
-  (`scopeBodyForCook`), so a hand-crafted body naming another house is rewritten
-  to their own; and
-- a cook's `load` response is filtered to that one house (`filterLoadForCook`),
-  failing closed to an empty list on any unexpected shape.
-
-So **no other house's data is reachable from a house URL** — reading or writing.
-
-### Admin — HMAC session (ecosystem standard)
-
-The root URL `/` and the budget admin (all-houses) view stay behind a login.
-`POST /api/login` with the **`ADMIN_PIN` word code** (case-insensitive,
-whitespace-trimmed, timing-safe compare, per-IP rate limited) returns a token
-`"<base64url(payload)>.<hmacSha256Hex>"` over the payload
-`"kitchen:admin:<empty houseId>:<expiresAtMs>"`, keyed by `SESSION_SECRET`. The
-code is a word (letters), so `ezone`, `EZONE`, and `" Ezone "` all match a stored
-`EZONE`.
-
-- The token is sent as `Authorization: Bearer <token>` on the all-houses
-  `/api/sheets` endpoint and verified server-side (`lib/auth.js` →
-  `requireAdmin`, which requires `role === 'admin'`).
-- The `kitchen:` payload prefix means a token minted by another E-Zone app is
-  invalid here (and vice-versa) even if the same secret were reused.
-- `lib/auth.js` is **never** statically served; only `lib/kitchen-domain.js` is
-  exposed, via an explicit route.
-- A second secret, `APPS_SCRIPT_SECRET`, authenticates this server to the Apps
-  Script (defence in depth: knowing the `/exec` URL is not enough to write).
+`server.js` fails closed on startup if the backend config (`APPS_SCRIPT_URL`,
+`APPS_SCRIPT_SECRET`) is missing in production. Only `lib/kitchen-domain.js` is
+served from `lib/` (via an explicit route); there is no static mount on `lib/`.
 
 ## Persistence & concurrency
 

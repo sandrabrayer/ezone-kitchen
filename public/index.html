@@ -10,52 +10,30 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <!-- Login overlay -->
-  <div id="loginOverlay" class="login-overlay" hidden>
-    <div class="login-card" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
-      <div class="login-brand">איזון · מטבח</div>
-      <h2 id="loginTitle">כניסה</h2>
-      <p class="login-sub">הזינו קוד גישה</p>
-      <!-- Word codes (not digits): force Latin input, no auto-capitalise, so a
-           Hebrew-keyboard user types the Latin code as stored. -->
-      <input id="loginPin" class="login-pin" type="text" inputmode="text"
-             autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"
-             maxlength="32" dir="ltr" aria-label="קוד גישה" placeholder="קוד גישה" />
-      <button id="loginBtn" class="login-btn" type="button">כניסה</button>
-      <div id="loginError" class="login-error" role="alert" hidden></div>
-    </div>
-  </div>
-
   <!-- App bar -->
   <header class="appbar no-print">
     <div class="appbar-inner">
       <div class="brand">
-        <img src="/favicon.svg" alt="" width="26" height="26" />
+        <img src="/favicon.svg" alt="" width="28" height="28" />
         <span>איזון · מטבח</span>
       </div>
       <div class="spacer"></div>
-      <div class="controls">
-        <label class="muted" id="houseLabel" for="houseSelect">בית:</label>
-        <select id="houseSelect" aria-label="בחירת בית"></select>
-        <span id="houseName" class="house-name" hidden></span>
-        <button id="addHouseBtn" class="ghost" title="הוסף בית" type="button">＋</button>
-        <span id="roleBadge" class="role-badge" hidden></span>
-        <button id="logoutBtn" class="ghost" title="התנתקות" type="button">יציאה</button>
-      </div>
+      <span id="footStatus" class="status muted" aria-live="polite"></span>
     </div>
   </header>
 
-  <!-- Tabs -->
-  <nav class="tabs no-print" id="tabs" role="tablist" aria-label="ניווט"></nav>
+  <!-- House switcher (chips) -->
+  <nav class="house-switcher no-print" id="houseSwitcher" aria-label="בחירת בית"></nav>
 
   <!-- Screen -->
   <main class="app"><div id="screen"></div></main>
 
-  <footer class="foot no-print"><span id="footStatus" class="muted"></span></footer>
+  <!-- Tab bar (bottom on mobile) -->
+  <nav class="tabs no-print" id="tabs" role="tablist" aria-label="ניווט"></nav>
 
   <script src="/lib/kitchen-domain.js"></script>
   <script src="/app.js"></script>

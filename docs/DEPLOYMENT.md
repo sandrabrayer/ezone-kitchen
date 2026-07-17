@@ -35,18 +35,13 @@ This PR targets `main`, so once merged, `main` is the deploy branch.
 
    | Variable             | Value                                              |
    | -------------------- | -------------------------------------------------- |
-   | `ADMIN_PIN`          | admin access code (a word) — all houses + budget admin view. The only login. |
-   | `SESSION_SECRET`     | random string ≥ 32 chars                           |
    | `APPS_SCRIPT_URL`    | the Apps Script `/exec` URL                        |
-   | `APPS_SCRIPT_SECRET` | same as the Apps Script `SHARED_SECRET` property   |
-   | `SESSION_DAYS`       | optional, default 7                                |
+   | `APPS_SCRIPT_SECRET` | same as the Apps Script `SHARED_SECRET` property (server→Apps Script only, not a user login) |
 
-   The server **fails closed**: it refuses to start if `ADMIN_PIN`,
-   `SESSION_SECRET`, `APPS_SCRIPT_URL`, or `APPS_SCRIPT_SECRET` is missing (or if
-   `SESSION_SECRET` < 32 chars). That is intentional. **Cooks don't log in** —
-   each house has a dedicated URL `/h/<houseId>` (e.g. `/h/ramot-hashavim`) that
-   opens straight into that one house, so there is nothing to configure for
-   cooks; just hand each cook their house URL.
+   The server **fails closed**: it refuses to start if `APPS_SCRIPT_URL` or
+   `APPS_SCRIPT_SECRET` is missing. That is intentional. **There is no user
+   login** — the app is open: opening the URL shows the house switcher and every
+   tab. There are no auth env vars to set.
 3. Deploy. Railway health-checks `GET /healthz`.
 4. Do the Google side once: [`APPS-SCRIPT-SETUP.md`](APPS-SCRIPT-SETUP.md).
 

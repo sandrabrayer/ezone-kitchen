@@ -7,6 +7,86 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Changed — more vivid palette (emerald + warm amber accent)
+
+Refreshed the color system so it reads alive rather than muted, without becoming
+loud. Contrast stays WCAG-readable (vivid accents, not vivid text).
+
+- **Richer primary green**: replaced the grayed forest green (`#2f7d5b`) with a
+  vivid **emerald** built on the ezone ecosystem green (`ezone-managers` uses
+  `#10B981`/`#34D399`), deepened to `#0b8457` so white button text stays ≥4.5:1.
+- **Warm secondary accent (amber/gold)** for highlights: the **"היום" badge**
+  (gold), the **active tab indicator** (gold bar), the **budget ₪ figures**
+  (`#b45309`, ~5:1 on white), and the shopping category **count badges**. The
+  budget variance figure keeps its red/green over/under semantic.
+- **More saturated, clearly distinct category dots** (groceries gold, vegetables
+  green, fruits orange, meat red, dry violet) and meal accent stripes
+  (breakfast amber, lunch green, dinner indigo).
+- **More depth**: a subtle warm background tint and stronger card shadows
+  instead of flat gray-white.
+
+### Changed — mobile-first UI redesign (cooks on phones)
+
+Redesigned the interface for its real use: house cooks on **their phones** in a
+kitchen (admin also on desktop). Hebrew RTL throughout. Vanilla CSS only — no
+framework, no build step.
+
+- **Big touch targets**: buttons and inputs are ≥48px tall with generous
+  spacing; the shopping-list rows and tab targets are larger still.
+- **Bottom tab bar on phones**: fixed to the bottom with icon-over-label items
+  and an obvious active state (green, top indicator). On desktop it becomes a
+  pill row under the house switcher.
+- **House switcher** is a horizontal, scrollable chip row (the active house is a
+  filled green chip) — replaces the old dropdown.
+- **Typography**: 17px base on mobile / 18px on desktop, heavier headings,
+  tabular-nums for quantities and ₪ so numbers read at a glance; numeric inputs
+  render LTR so `0.12` / `1500` don't reorder in RTL.
+- **One accent system** refined around the existing brand green, plus per-meal
+  accent stripes (breakfast/lunch/dinner) and per-category color dots
+  (groceries/vegetables/fruits/meat/dry) for fast scanning.
+- **Weekly menu** stacks day cards vertically on phones (multi-column on
+  desktop); **today is highlighted** (ring + "היום" badge). Ingredient editing
+  is a touch-friendly two-row layout.
+- **Shopping list for in-store use**: category sections with color dots and
+  counts, **prominent to-buy quantities**, and **tap-to-check-off** rows
+  (transient). A dedicated **print stylesheet** renders it black-on-white with
+  check squares and no app chrome.
+- **Friendly empty states** (icon + Hebrew hint) instead of blank screens.
+
+Verified in a headless browser at 380px (phone) and desktop widths across menu,
+shopping, stock, headcount, budget, and the all-houses view.
+
+### Changed — one open app, no login for anyone (auth removed entirely)
+
+Simplified the access model to its final form: **ONE app, ONE URL, NO login.**
+Opening the root URL shows the app directly — a house switcher across the five
+houses and **every tab open to every visitor** (menu, headcount, allergies,
+stock, shopping list, budget, and the all-houses view). Nothing is behind a
+login.
+
+Removed entirely: the `/h/<houseId>` URL model, cook scoping/pinning, `ADMIN_PIN`,
+`SESSION_SECRET`, `SESSION_DAYS`, HMAC session tokens, the login screen, and all
+auth code and tests.
+
+- **`server.js`**: a single open `POST /api/sheets` proxy — no tokens, no roles,
+  no `/api/login`, no `/h/:houseId` route. Startup now requires only
+  `APPS_SCRIPT_URL` and `APPS_SCRIPT_SECRET`. The shared secret stays and is
+  still injected server-side (after the client body, so a client can't override
+  it): it prevents strangers who find the `/exec` URL from writing to the Sheet
+  directly — it is **not** a user login.
+- **Deleted `lib/auth.js`** and its tests (`auth`, `server-auth`, `cook-scope`,
+  `no-auth-guard`, `login-word-codes`, `login-env-sanitize`). Added
+  `test/server.test.js`: the open proxy reaches the upstream with no auth, and
+  the server injects `APPS_SCRIPT_SECRET` even when the client tries to supply
+  its own.
+- **Frontend (`public/`)**: removed the login overlay, tokens, roles, and the
+  `/h/<houseId>` boot path. The house switcher (chips) and all tabs — including
+  the all-houses view — are always shown. `index.html` no longer has a login
+  overlay or role chrome.
+- **Docs**: README, `docs/ARCHITECTURE.md`, `docs/DEPLOYMENT.md`,
+  `docs/APPS-SCRIPT-SETUP.md`, and `.env.example` updated — no auth env vars, the
+  shared secret documented as server→Apps Script only.
+
 ### Changed — cooks use a house URL (no login); COOK_PINS removed
 
 Cooks no longer log in. Each house has a **dedicated URL** `/h/<houseId>`
