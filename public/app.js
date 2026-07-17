@@ -2,7 +2,8 @@
    Talks to /api/sheets which proxies (POST-only) to the Google Apps Script
    bound to the Sheet. All shopping-list / budget math comes from the shared
    KitchenDomain UMD module (/lib/kitchen-domain.js), the same code the tests
-   exercise. Auth: PIN -> HMAC session token (see server.js / lib/auth.js). */
+   exercise. The app is OPEN: no login, no roles — one URL shows the house
+   switcher and every tab to every visitor. */
 'use strict';
 
 const KD = window.KitchenDomain;
@@ -27,55 +28,15 @@ function setStatus(text) {
 }
 function $(sel, root) { return (root || document).querySelector(sel); }
 
-/* ============================ session token ============================ */
-const TOKEN_KEY = 'ezk_session_token';
-function getToken() { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; } }
-function setToken(t) { try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); } catch { /* private mode */ } }
-
-/* The role and (for a cook) the house are read from the signed token, not from
-   any client-controlled setting — the server decided them from the PIN. The
-   payload is only base64url-encoded (not secret); the HMAC (dropped here) is
-   what makes it unforgeable, so the browser can safely read the claims. */
-function decodeToken(token) {
-  try {
-    const body = String(token || '').split('.')[0];
-    if (!body) return null;
-    let b64 = body.replace(/-/g, '+').replace(/_/g, '/');
-    while (b64.length % 4) b64 += '=';
-    const payload = atob(b64); // "kitchen:<role>:<houseId>:<exp>"
-    const parts = payload.split(':');
-    if (parts.length !== 4 || parts[0] !== 'kitchen') return null;
-    return { role: parts[1], houseId: parts[2], expiresAt: Number(parts[3]) };
-  } catch { return null; }
-}
-
 /* ============================ API client ============================ */
-/* A cook has no login: their house comes from the URL (/h/<houseId>), so their
-   API calls go to that same path (/h/<houseId>/api/sheets) with no token — the
-   server pins the house from the path. An admin holds a Bearer token and calls
-   the all-houses /api/sheets endpoint. */
-function apiEndpoint() {
-  return state.role === 'cook'
-    ? '/h/' + encodeURIComponent(state.myHouseId) + '/api/sheets'
-    : '/api/sheets';
-}
-
+/* The app is open — no auth. Every call POSTs {action, ...} to /api/sheets,
+   which proxies to Apps Script (injecting the server-only shared secret). */
 async function api(action, payload) {
-  const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
-  if (state.role !== 'cook') {
-    const token = getToken();
-    if (token) headers.Authorization = 'Bearer ' + token;
-  }
-  const r = await fetch(apiEndpoint(), {
+  const r = await fetch('/api/sheets', {
     method: 'POST',
-    headers,
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(Object.assign({ action }, payload || {})),
   });
-  if (r.status === 401) {
-    // Only the admin surface can re-authenticate; a cook URL has no login.
-    if (state.role !== 'cook') { setToken(''); showLogin(); throw new Error('נדרשת התחברות'); }
-    throw new Error('הגישה נדחתה');
-  }
   const text = await r.text();
   let data;
   try { data = JSON.parse(text); } catch { throw new Error('תשובה לא תקינה מהשרת'); }
@@ -113,11 +74,10 @@ const persist = {
 const state = {
   houses: [],
   activeHouseId: null,
-  role: 'cook',    // set from the session token in start()
-  myHouseId: '',   // for a cook: the one house this session is locked to
   currentWeekOf: KD.weekStart(new Date()),
   tab: 'menu',
   unitPref: {}, // transient per-ingredient display unit (id -> 'kg'|'g')
+  checked: {},  // transient shopping-list check-off state (ingredient key -> true)
 };
 
 function activeHouse() {
@@ -142,71 +102,63 @@ async function loadState() {
     h.weeks = h.weeks || {};
     if (typeof h.weeklyBudget !== 'number') h.weeklyBudget = 0;
   }
-  // A cook is locked to their own house (the server returns only that house).
-  if (state.role === 'cook') {
-    const mine = state.houses.find((h) => h.id === state.myHouseId) || state.houses[0];
-    state.activeHouseId = mine ? mine.id : null;
-  } else if (!state.activeHouseId && state.houses[0]) {
-    state.activeHouseId = state.houses[0].id;
+  // Keep the current house if it still exists, else default to the first.
+  if (!state.houses.some((h) => h.id === state.activeHouseId)) {
+    state.activeHouseId = state.houses[0] ? state.houses[0].id : null;
   }
 }
 
 /* ============================ rendering ============================ */
+/* Short labels + an icon so the tab bar fits a narrow phone screen. The
+   all-houses view is a tab like any other — the app is open to everyone. */
 const TABS = [
-  { id: 'menu', label: '🗓️ תפריט שבועי' },
-  { id: 'headcount', label: '👥 תפוסה' },
-  { id: 'stock', label: '📦 מלאי' },
-  { id: 'shopping', label: '🛒 רשימת קניות' },
-  { id: 'budget', label: '💰 תקציב' },
+  { id: 'menu', icon: '🗓️', label: 'תפריט' },
+  { id: 'headcount', icon: '👥', label: 'תפוסה' },
+  { id: 'stock', icon: '📦', label: 'מלאי' },
+  { id: 'shopping', icon: '🛒', label: 'קניות' },
+  { id: 'budget', icon: '💰', label: 'תקציב' },
+  { id: 'admin', icon: '🏠', label: 'כל הבתים' },
 ];
 
 function renderChrome() {
-  const isAdmin = state.role === 'admin';
-  const houseSel = $('#houseSelect');
-  const houseLabel = $('#houseLabel');
-  const houseName = $('#houseName');
-  const addBtn = $('#addHouseBtn');
-  const badge = $('#roleBadge');
-  const logoutBtn = $('#logoutBtn');
+  // House switcher (chips) — always available. The all-houses tab isn't tied to
+  // a single house, so it hides the switcher.
+  const showHouses = state.tab !== 'admin';
+  const switcher = $('#houseSwitcher');
+  const active = activeHouse();
+  switcher.hidden = !showHouses;
+  switcher.innerHTML = showHouses ? state.houses.map((h) =>
+    `<button class="house-chip" data-act="selHouse" data-id="${esc(h.id)}" aria-current="${active && h.id === active.id}">${esc(h.name)}</button>`
+  ).join('') + `<button class="house-chip add" data-act="addHouse" title="הוסף בית" aria-label="הוסף בית">＋</button>` : '';
 
-  if (isAdmin) {
-    // Admin: switch across all houses, and may add houses.
-    houseSel.hidden = false; houseLabel.hidden = false; addBtn.hidden = false; houseName.hidden = true;
-    houseSel.innerHTML = state.houses.map((h) => `<option value="${esc(h.id)}">${esc(h.name)}</option>`).join('');
-    if (activeHouse()) houseSel.value = activeHouse().id;
-    badge.hidden = false; badge.textContent = 'מנהל/ת';
-    if (logoutBtn) logoutBtn.hidden = false; // admin has a session to end
-  } else {
-    // Cook: locked to one house — no switcher, no add-house, no logout (there is
-    // no login; the URL is the access).
-    houseSel.hidden = true; houseLabel.hidden = true; addBtn.hidden = true;
-    const h = activeHouse();
-    houseName.hidden = false; houseName.textContent = h ? h.name : '';
-    badge.hidden = false; badge.textContent = 'טבח/ית';
-    if (logoutBtn) logoutBtn.hidden = true;
-  }
-
-  // Only admin gets the all-houses view.
-  const tabs = isAdmin ? TABS.concat([{ id: 'admin', label: '🏠 כל הבתים' }]) : TABS;
-  $('#tabs').innerHTML = tabs.map((t) =>
-    `<button data-tab="${t.id}" role="tab" aria-current="${state.tab === t.id}">${esc(t.label)}</button>`).join('');
+  $('#tabs').innerHTML = TABS.map((t) =>
+    `<button data-tab="${t.id}" role="tab" aria-current="${state.tab === t.id}">
+       <span class="tab-ic" aria-hidden="true">${t.icon}</span><span class="tab-tx">${esc(t.label)}</span>
+     </button>`).join('');
 }
 
 function render() {
-  // The admin-only view is never reachable as a cook, even via a stale tab.
-  if (state.role !== 'admin' && state.tab === 'admin') state.tab = 'menu';
   renderChrome();
   const screen = $('#screen');
+  if (state.tab === 'admin') { screen.innerHTML = renderAdmin(); return; }
   const house = activeHouse();
   if (!house) {
-    screen.innerHTML = state.role === 'admin'
-      ? `<div class="card">אין בתים עדיין. הוסיפו בית עם הכפתור ＋ למעלה כדי להתחיל.</div>`
-      : `<div class="card">הבית שלך עדיין לא הוגדר במערכת. פנו למנהל/ת.</div>`;
+    screen.innerHTML = emptyState('🏠', 'אין בתים עדיין',
+      'הוסיפו בית עם הכפתור ＋ שליד מתגי הבתים כדי להתחיל.');
     return;
   }
-  const map = { menu: renderMenu, headcount: renderHeadcount, stock: renderStock, shopping: renderShopping, budget: renderBudget, admin: renderAdmin };
+  const map = { menu: renderMenu, headcount: renderHeadcount, stock: renderStock, shopping: renderShopping, budget: renderBudget };
   const fn = map[state.tab] || renderMenu;
   screen.innerHTML = fn(house);
+}
+
+/* Friendly empty state instead of a blank screen. */
+function emptyState(icon, title, hint) {
+  return `<div class="empty">
+    <div class="empty-ic" aria-hidden="true">${icon}</div>
+    <div class="empty-title">${esc(title)}</div>
+    ${hint ? `<div class="empty-hint">${esc(hint)}</div>` : ''}
+  </div>`;
 }
 
 function allergyBanner(house) {
@@ -489,10 +441,12 @@ function renderAdmin() {
     </tr>`;
   }).join('');
 
+  if (!state.houses.length) {
+    return emptyState('🏠', 'אין בתים עדיין', 'הוסיפו בית מתפריט הבתים כדי להתחיל.');
+  }
   return `<div class="card">
-    <h2>מבט מנהל — כל הבתים</h2>
-    <p class="muted">שבוע ${esc(KD.formatDateHe(weekOf))}</p>
-    <p class="muted" style="font-size:.75rem">💡 המזהה שמתחת לשם הבית הוא ה־house id — כתובת הבית לטבח/ית היא <code>/h/&lt;house id&gt;</code> (למשל <code>/h/ramot-hashavim</code>). פתיחת הכתובת נכנסת ישירות לאותו בית, ללא כניסה.</p>
+    <h2>מבט על — כל הבתים</h2>
+    <p class="muted">שבוע ${esc(KD.formatDateHe(weekOf))} · תקציב, הערכה מהתפריט והוצאה בפועל לכל בית.</p>
     <table>
       <thead><tr><th>בית</th><th>סועדים (בסיס)</th><th>תקציב</th><th>הערכה</th><th>בפועל</th><th>מול תקציב</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
@@ -624,9 +578,32 @@ async function onClick(e) {
 
     case 'waShare': window.open('https://wa.me/?text=' + encodeURIComponent(shoppingListText(house)), '_blank'); break;
     case 'printList': window.print(); break;
-    case 'openHouse': state.activeHouseId = d.id; state.tab = 'budget'; render(); break;
+    case 'openHouse': state.activeHouseId = d.id; state.tab = 'menu'; render(); break;
+
+    case 'selHouse': state.activeHouseId = d.id; render(); break;
+    case 'addHouse': await addHouse(); break;
+
+    // Shopping list: tap a line to check it off (transient, in-store use).
+    case 'checkItem': {
+      const key = d.key;
+      if (state.checked[key]) delete state.checked[key]; else state.checked[key] = true;
+      const row = btn.closest('.shop-item');
+      if (row) row.classList.toggle('done', !!state.checked[key]);
+      break;
+    }
     default: break;
   }
+}
+
+async function addHouse() {
+  const name = window.prompt('שם הבית החדש:');
+  if (!name || !name.trim()) return;
+  const house = { id: KD.newId('house'), name: name.trim(), headcount: KD.emptyHeadcount(), allergies: [], stock: [], prices: [], purchases: [], weeks: {}, weeklyBudget: 0 };
+  state.houses.push(house);
+  state.activeHouseId = house.id;
+  render();
+  try { setStatus('שומר…'); await api('saveHouse', { house: { id: house.id, name: house.name, weeklyBudget: 0 } }); setStatus('נשמר ✓'); }
+  catch (err) { setStatus('שגיאת שמירה: ' + err.message); }
 }
 
 function setOverride(house, day, field, value) {
@@ -641,76 +618,24 @@ function clampInt(v) { const n = parseInt(v, 10); return Number.isFinite(n) && n
 
 /* ============================ chrome events ============================ */
 function wireChrome() {
-  $('#houseSelect').addEventListener('change', (e) => { state.activeHouseId = e.target.value; render(); });
-  $('#addHouseBtn').addEventListener('click', async () => {
-    const name = window.prompt('שם הבית החדש:');
-    if (!name) return;
-    const house = { id: KD.newId('house'), name: name.trim(), headcount: KD.emptyHeadcount(), allergies: [], stock: [], prices: [], purchases: [], weeks: {}, weeklyBudget: 0 };
-    state.houses.push(house);
-    state.activeHouseId = house.id;
-    render();
-    try { setStatus('שומר…'); await api('saveHouse', { house: { id: house.id, name: house.name, weeklyBudget: 0 } }); setStatus('נשמר ✓'); }
-    catch (err) { setStatus('שגיאת שמירה: ' + err.message); }
-  });
-  $('#logoutBtn').addEventListener('click', () => { setToken(''); location.reload(); });
-
   const screen = $('#screen');
   screen.addEventListener('input', onInput);
   screen.addEventListener('change', onChange);
   screen.addEventListener('click', onClick);
-  // Tab buttons live in #tabs (outside #screen), so they need their own
-  // delegated click handler — onClick routes data-tab buttons.
+  // The tab bar and house switcher live outside #screen, so they need their own
+  // delegated click handler — onClick routes data-tab and data-act buttons.
   $('#tabs').addEventListener('click', onClick);
-}
-
-/* ============================ login ============================ */
-function showLogin() { const ov = $('#loginOverlay'); if (ov) { ov.hidden = false; const p = $('#loginPin'); if (p) { p.value = ''; setTimeout(() => p.focus(), 50); } } }
-function hideLogin() { const ov = $('#loginOverlay'); if (ov) ov.hidden = true; }
-function setLoginError(msg) { const el = $('#loginError'); if (el) { el.textContent = msg || ''; el.hidden = !msg; } }
-
-async function submitLogin() {
-  const pin = ($('#loginPin').value || '').trim();
-  const btn = $('#loginBtn');
-  if (!pin) { setLoginError('נא להזין קוד'); return; }
-  setLoginError(''); btn.disabled = true;
-  try {
-    const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ pin }) });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok || !data.token) { setLoginError(data.error || 'קוד שגוי'); return; }
-    setToken(data.token);
-    hideLogin();
-    await start();
-  } catch { setLoginError('שגיאת רשת. נסו שוב.'); }
-  finally { btn.disabled = false; }
+  $('#houseSwitcher').addEventListener('click', onClick);
 }
 
 /* ============================ boot ============================ */
-/* A house URL is /h/<houseId>. When the page is opened there, we go straight
-   into that house in cook scope — no login. The root URL / is the admin surface
-   and stays behind the ADMIN_PIN login. */
-function housePathId() {
-  const m = /^\/h\/([^/]+)\/?$/.exec(location.pathname);
-  return m ? decodeURIComponent(m[1]) : '';
-}
-
 async function start() {
   try {
-    if (state.role === 'cook') {
-      // House came from the URL path; the server pins it. No token, no login.
-      state.tab = state.tab === 'admin' ? 'menu' : state.tab;
-    } else {
-      // Admin: role + (no) house come from the signed token, set at login.
-      const claims = decodeToken(getToken());
-      if (!claims || claims.role !== 'admin') { setToken(''); showLogin(); return; }
-      state.role = 'admin';
-      state.myHouseId = '';
-    }
     setStatus('טוען נתונים…');
     await loadState();
     setStatus('');
     render();
   } catch (err) {
-    if (String(err.message).includes('התחברות')) return; // login shown
     setStatus('שגיאה בטעינה: ' + err.message);
     render();
   }
@@ -718,20 +643,7 @@ async function start() {
 
 function boot() {
   wireChrome();
-  $('#loginBtn').addEventListener('click', submitLogin);
-  $('#loginPin').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitLogin(); });
-
-  const houseId = housePathId();
-  if (houseId) {
-    // Cook: dedicated house URL — locked to this one house, no login.
-    state.role = 'cook';
-    state.myHouseId = houseId;
-    start();
-  } else {
-    // Admin surface at the root URL — needs the ADMIN_PIN session token.
-    state.role = 'admin';
-    if (getToken()) start(); else showLogin();
-  }
+  start();
 }
 
 document.addEventListener('DOMContentLoaded', boot);

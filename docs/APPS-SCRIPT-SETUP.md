@@ -57,21 +57,19 @@ Set these environment variables on the Railway service (see
 | -------------------- | ------------------------------------------------- |
 | `APPS_SCRIPT_URL`    | the `/exec` URL from step 4                        |
 | `APPS_SCRIPT_SECRET` | the same string as the `SHARED_SECRET` from step 3 |
-| `ADMIN_PIN`          | the admin access code (all houses + budget admin view); the only login |
-| `SESSION_SECRET`     | a random string ≥ 32 chars                          |
+
+There are no auth/login variables — the app is open.
 
 ## 6. Verify
 
-- Open the deployed app and log in with `ADMIN_PIN`. On the **first** load, when
-  the `houses` tab is empty, the backend seeds the five production houses
-  automatically (`ramot-hashavim`, `raanana-asher`, `caesarea-ofroni`,
-  `caesarea-rehab`, `pardes`). Then check the Sheet — a `houses` tab (and others)
-  should appear and fill in. The seed is idempotent: it only runs on an empty
-  tab, so it never duplicates and never overwrites a house you later rename.
-- To give a cook access to a house: hand them that house's URL, `/h/<houseId>`
-  (e.g. `/h/ramot-hashavim`). Opening it goes straight into that one house — no
-  login, and no other house is reachable from it. The house id is the seeded id
-  above (or copy it from the admin all-houses view).
+- Open the deployed app (no login). On the **first** load, when the `houses` tab
+  is empty, the backend seeds the five production houses automatically
+  (`ramot-hashavim`, `raanana-asher`, `caesarea-ofroni`, `caesarea-rehab`,
+  `pardes`). Then check the Sheet — a `houses` tab (and others) should appear and
+  fill in. The seed is idempotent: it only runs on an empty tab, so it never
+  duplicates and never overwrites a house you later rename.
+- Everyone who opens the app gets the house switcher and every tab; there is
+  nothing to configure per user.
 - Direct `GET` on the `/exec` URL returns `{"ok":true,"service":"ezone-kitchen",
   "note":"POST only"}` — that confirms it's live. All real calls are POST and go
   through the server.

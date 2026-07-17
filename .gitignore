@@ -12,3 +12,7 @@ Thumbs.db
 .vscode/
 *.log
 dist/
+
+# local verification harness / screenshots (not committed)
+scratchpad/
+scratchpad-verify.js

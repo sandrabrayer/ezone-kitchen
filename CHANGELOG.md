@@ -7,6 +7,37 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Changed — one open app, no login for anyone (auth removed entirely)
+
+Simplified the access model to its final form: **ONE app, ONE URL, NO login.**
+Opening the root URL shows the app directly — a house switcher across the five
+houses and **every tab open to every visitor** (menu, headcount, allergies,
+stock, shopping list, budget, and the all-houses view). Nothing is behind a
+login.
+
+Removed entirely: the `/h/<houseId>` URL model, cook scoping/pinning, `ADMIN_PIN`,
+`SESSION_SECRET`, `SESSION_DAYS`, HMAC session tokens, the login screen, and all
+auth code and tests.
+
+- **`server.js`**: a single open `POST /api/sheets` proxy — no tokens, no roles,
+  no `/api/login`, no `/h/:houseId` route. Startup now requires only
+  `APPS_SCRIPT_URL` and `APPS_SCRIPT_SECRET`. The shared secret stays and is
+  still injected server-side (after the client body, so a client can't override
+  it): it prevents strangers who find the `/exec` URL from writing to the Sheet
+  directly — it is **not** a user login.
+- **Deleted `lib/auth.js`** and its tests (`auth`, `server-auth`, `cook-scope`,
+  `no-auth-guard`, `login-word-codes`, `login-env-sanitize`). Added
+  `test/server.test.js`: the open proxy reaches the upstream with no auth, and
+  the server injects `APPS_SCRIPT_SECRET` even when the client tries to supply
+  its own.
+- **Frontend (`public/`)**: removed the login overlay, tokens, roles, and the
+  `/h/<houseId>` boot path. The house switcher (chips) and all tabs — including
+  the all-houses view — are always shown. `index.html` no longer has a login
+  overlay or role chrome.
+- **Docs**: README, `docs/ARCHITECTURE.md`, `docs/DEPLOYMENT.md`,
+  `docs/APPS-SCRIPT-SETUP.md`, and `.env.example` updated — no auth env vars, the
+  shared secret documented as server→Apps Script only.
+
 ### Changed — cooks use a house URL (no login); COOK_PINS removed
 
 Cooks no longer log in. Each house has a **dedicated URL** `/h/<houseId>`

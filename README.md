@@ -7,9 +7,9 @@ manual stock count, and turns the week's plan into a **net shopping list** and a
 
 The app is Hebrew-first and right-to-left, matching the people who use it
 (kitchen staff and administrators). It is built to the **E-Zone ecosystem
-standard**: a vanilla-JS frontend (no build step), a Node/Express static server
-with **HMAC session auth**, and a **Google Apps Script + Google Sheets**
-backend — the same shape as `ezone-managers` / `ezone-staffing`.
+standard**: a vanilla-JS frontend (no build step), a Node/Express static server,
+and a **Google Apps Script + Google Sheets** backend — the same shape as
+`ezone-managers` / `ezone-staffing`. The app is **open** (no user login).
 
 ---
 
@@ -17,50 +17,40 @@ backend — the same shape as `ezone-managers` / `ezone-staffing`.
 
 ```
 Browser (vanilla JS, RTL)
-   │  cook: house URL /h/<houseId>  (no login — the path is the house)
-   │  admin: ADMIN_PIN login → HMAC session token (Bearer)
+   │  ONE URL, NO login — house switcher + every tab, open to everyone
    ▼
 Node / Express server  (server.js)   ← hosted on Railway
    │  • serves the static frontend + the shared domain module
-   │  • /h/<houseId>/api/sheets → cook scope pinned to that house (no token)
-   │  • /api/login issues the admin token; /api/sheets requires it (all houses)
-   │  • proxies POSTs to Apps Script, injecting a server-only shared secret
+   │  • /api/sheets proxies POSTs to Apps Script (no user auth)
+   │  • injects a server-only shared secret so only THIS server can write
    ▼
 Google Apps Script  (apps-script/Code.gs, POST-only)
    ▼
 Google Sheet — one tab per entity
 ```
 
-The Apps Script `/exec` URL and every secret live **only in Railway environment
-variables** — never in the repo, never sent to the browser. The browser talks
-only to this server; the server talks to Apps Script. See
+The Apps Script `/exec` URL and the shared secret live **only in Railway
+environment variables** — never in the repo, never sent to the browser. The
+browser talks only to this server; the server talks to Apps Script. See
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-Data is **shared across users and devices** (a cook updates stock on one
-device; an admin sees every house on another) because the source of truth is
-the Google Sheet, not the browser.
+Data is **shared across users and devices** (one person updates stock on a
+phone; another sees every house on a laptop) because the source of truth is the
+Google Sheet, not the browser.
 
 ---
 
 ## Access model
 
-- **Cooks don't log in.** Each house has a dedicated URL and opening it goes
-  straight into that one house — locked to it (no house switcher, no add-house,
-  no all-houses view). The house is pinned **server-side from the URL path**, so
-  a house URL can read and write **only its own** house's data; no other house is
-  reachable from it. The URL is the access — hand each cook their house URL.
+**One app, one URL, no login for anyone.** Opening the app shows it directly: a
+house switcher across the five houses and **every tab open to every visitor** —
+menu, headcount, allergies, stock, shopping list, budget, and the all-houses
+view. Nothing is behind a login.
 
-  | House               | URL                     |
-  | ------------------- | ----------------------- |
-  | רמות השבים          | `/h/ramot-hashavim`     |
-  | רעננה אשר           | `/h/raanana-asher`      |
-  | קיסריה עפרוני       | `/h/caesarea-ofroni`    |
-  | קיסריה שיקום        | `/h/caesarea-rehab`     |
-  | פרדס                | `/h/pardes`             |
-
-- **Admin logs in.** The root URL `/` and the budget admin (all-houses) view stay
-  behind the `ADMIN_PIN` login, which mints an HMAC session token. `/api/sheets`
-  (all houses) requires that token.
+The **only** secret is `APPS_SCRIPT_SECRET`, a server→Apps Script shared secret
+injected when proxying. It is **not a user login**: it just proves a write came
+from this server, so a stranger who discovers the `/exec` URL cannot write to the
+Sheet directly.
 
 ---
 
@@ -119,25 +109,24 @@ Requires **Node ≥ 18**.
 
 ```bash
 npm install
-cp .env.example .env      # fill in ADMIN_PIN, SESSION_SECRET, APPS_SCRIPT_URL, APPS_SCRIPT_SECRET
-npm test                  # domain math + HMAC auth + server + cook scoping
+cp .env.example .env      # fill in APPS_SCRIPT_URL, APPS_SCRIPT_SECRET
+npm test                  # domain math + server proxy
 npm start                 # http://localhost:3000
 ```
 
 Without a configured `.env` the server fails closed (it refuses to start
-without its secrets) — that is intentional. For the backend, follow
+without its backend config) — that is intentional. For the backend, follow
 [`docs/APPS-SCRIPT-SETUP.md`](docs/APPS-SCRIPT-SETUP.md) to create the Sheet and
-deploy the Apps Script, then set the four variables.
+deploy the Apps Script, then set the two variables.
 
 ### Environment variables
 
 | Variable             | Purpose                                                        |
 | -------------------- | -------------------------------------------------------------- |
-| `ADMIN_PIN`          | Admin access code (a word) — all houses + the budget admin (all-houses) view. The only login; matched case-insensitively. (Cooks don't log in — they use a house URL `/h/<houseId>`.) |
-| `SESSION_SECRET`     | HMAC key for the admin session token (≥ 32 chars).            |
 | `APPS_SCRIPT_URL`    | The Apps Script Web App `/exec` URL. Server-side only.         |
-| `APPS_SCRIPT_SECRET` | Shared secret matching the Apps Script `SHARED_SECRET` prop.   |
-| `SESSION_DAYS`       | Optional session lifetime in days (default 7).                 |
+| `APPS_SCRIPT_SECRET` | Shared secret matching the Apps Script `SHARED_SECRET` prop. Server→Apps Script only — **not** a user login. |
+
+There are no auth/login env vars — the app is open.
 
 ---
 
@@ -145,20 +134,19 @@ deploy the Apps Script, then set the four variables.
 
 ```
 ezone-kitchen/
-├── server.js               # Express: static + /api/login (admin) + /h/<id>/api/sheets (cook) + /api/sheets (admin) proxy
+├── server.js               # Express: static + /api/sheets proxy (no user auth)
 ├── Procfile, railway.json  # Railway deploy config
-├── .env.example            # required env vars incl. ADMIN_PIN (no real values)
+├── .env.example            # required env vars (no real values)
 ├── lib/
-│   ├── auth.js             # HMAC session auth + role/house claims (server-only)
 │   └── kitchen-domain.js   # ⭐ shared pure domain logic (browser + tests)
 ├── public/                 # the vanilla frontend (no build step)
-│   ├── index.html          # RTL shell + login overlay
+│   ├── index.html          # RTL shell (no login — open app)
 │   ├── styles.css
 │   ├── favicon.svg
 │   └── app.js              # views, state, API client, debounced saves
 ├── apps-script/
 │   └── Code.gs             # Google Apps Script backend (POST-only)
-├── test/                   # node --test: buffer, aggregate, stock, budget, auth, server
+├── test/                   # node --test: buffer, aggregate, stock, budget, server
 └── docs/                   # ARCHITECTURE, DATA-MODEL, DEPLOYMENT, APPS-SCRIPT-SETUP
 ```
 
