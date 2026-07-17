@@ -2,24 +2,27 @@
 /*
  * ezone-kitchen server — auth at the ezone-managers / ezone-staffing standard:
  *   - fail-closed startup (all secrets required in production)
- *   - TWO PINs (timing-safe compare) with per-IP rate limiting:
- *       ADMIN_PIN  → admin role: all houses + the budget admin (all-houses) view
- *       COOK_PINS  → per-house cook codes: a cook code opens ONLY its one house
- *   - HMAC-signed session tokens (Bearer) carry the role + house, so a cook
- *     cannot self-promote to admin or reach another house from the browser
- *   - the proxy enforces "own house only" server-side for cooks (a cook's writes
- *     are pinned to their house and `load` is filtered to their house)
+ *   - COOKS DON'T LOG IN. Each house has a dedicated URL /h/<houseId>; opening
+ *     it goes straight into that one house in cook scope. The house comes from
+ *     the URL PATH — the cook API is POST /h/<houseId>/api/sheets — the way the
+ *     cook session token used to carry it. The proxy pins a cook's writes to
+ *     that house and filters `load` to that house, so no other house's data is
+ *     reachable from a house URL. There is no per-house secret: the URL is the
+ *     capability.
+ *   - ADMIN_PIN (timing-safe compare, per-IP rate limited) is the ONLY login.
+ *     It mints an HMAC-signed admin session token (Bearer) for the root URL /
+ *     and the admin all-houses view. POST /api/sheets requires that admin token.
  *   - lib/ is NOT statically mounted; only kitchen-domain.js is exposed
  *
- * The Google Apps Script /exec URL and every PIN/secret live ONLY in Railway
+ * The Google Apps Script /exec URL and every secret live ONLY in Railway
  * environment variables — never in the repo, never sent to the browser. The
  * browser talks only to this server; this server proxies to Apps Script.
- * Apps Script routes are POST-only, so /api/sheets forwards POST bodies.
+ * Apps Script routes are POST-only, so the sheets routes forward POST bodies.
  */
 const express = require('express');
 const path = require('path');
 
-const { signToken, verifyToken, checkCode, normalizeCode } = require('./lib/auth');
+const { signToken, verifyToken, checkCode } = require('./lib/auth');
 
 // Sanitise a value coming from an env var. Hosting dashboards (Railway, etc.)
 // commonly introduce a trailing newline/space or wrap the value in quotes when
@@ -52,50 +55,6 @@ function fatal(msg) {
   console.error(`[fatal] ${msg}`);
   process.exit(1);
 }
-
-// COOK_PINS is a JSON object mapping each cook PIN to the single house id that
-// code may open: {"1111":"house_ab12","2222":"house_cd34"}. Parsed once at
-// startup. An empty/absent value simply means no cook can log in yet (admin
-// still works) — that is not fatal.
-function parseCookPins(raw) {
-  const cleaned = cleanEnv(raw); // tolerate a quoted / whitespace-padded blob
-  if (!cleaned) return {};
-  let obj;
-  try {
-    obj = JSON.parse(cleaned);
-  } catch {
-    fatal('COOK_PINS must be valid JSON, e.g. {"1111":"house_ab12"}');
-  }
-  if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
-    fatal('COOK_PINS must be a JSON object mapping pin -> houseId');
-  }
-  const out = {};
-  const seen = new Set(); // normalized codes, to catch case-only duplicates
-  for (const rawPin of Object.keys(obj)) {
-    // Trim the pin and clean the house id the same way, so a padded env value
-    // still matches the trimmed code the browser sends.
-    const pin = String(rawPin).trim();
-    const houseId = cleanEnv(obj[rawPin]);
-    if (!pin) fatal('COOK_PINS contains an empty code');
-    if (!houseId) fatal(`COOK_PINS["${rawPin}"] must be a non-empty house id string`);
-    if (houseId.indexOf(':') !== -1) {
-      fatal(`COOK_PINS["${rawPin}"] house id must not contain ':'`);
-    }
-    // Codes match case-insensitively, so collisions must be checked normalized.
-    const norm = normalizeCode(pin);
-    if (ADMIN_PIN && norm === normalizeCode(ADMIN_PIN)) {
-      fatal('A cook code must not equal ADMIN_PIN (case-insensitively)');
-    }
-    if (seen.has(norm)) {
-      fatal(`COOK_PINS has two codes that differ only by case/spacing: "${rawPin}"`);
-    }
-    seen.add(norm);
-    out[pin] = houseId;
-  }
-  return out;
-}
-
-const COOK_PINS = parseCookPins(process.env.COOK_PINS);
 
 // Fail closed in production. Tests require() this module with NODE_ENV=test.
 if (process.env.NODE_ENV !== 'test' && require.main === module) {
@@ -143,17 +102,7 @@ function rateLimitLogin(ip) {
   return entry.count <= LOGIN_MAX;
 }
 
-// Match a submitted code against every configured cook code (case-insensitive,
-// and without short-circuiting, so the response time does not reveal how many
-// cook codes exist or how close a guess was). Returns the house id or ''.
-function matchCookPin(pin) {
-  let houseId = '';
-  for (const code of Object.keys(COOK_PINS)) {
-    if (checkCode(pin, code)) houseId = COOK_PINS[code];
-  }
-  return houseId;
-}
-
+// ADMIN_PIN is the only login. Cooks don't log in — they use a house URL.
 app.post('/api/login', (req, res) => {
   const ip = req.ip || (req.socket && req.socket.remoteAddress) || 'unknown';
   if (!rateLimitLogin(ip)) {
@@ -161,29 +110,24 @@ app.post('/api/login', (req, res) => {
   }
   const pin = String((req.body && req.body.pin) || '');
 
-  // Admin code wins if it matches.
   if (checkCode(pin, ADMIN_PIN)) {
     const token = signToken(SESSION_SECRET, { role: 'admin', houseId: '' }, SESSION_DAYS);
     return res.json({ token, role: 'admin', houseId: '', expiresInDays: SESSION_DAYS });
-  }
-
-  // Otherwise, a per-house cook code.
-  const houseId = matchCookPin(pin);
-  if (houseId) {
-    const token = signToken(SESSION_SECRET, { role: 'cook', houseId }, SESSION_DAYS);
-    return res.json({ token, role: 'cook', houseId, expiresInDays: SESSION_DAYS });
   }
 
   return res.status(401).json({ error: 'קוד שגוי' });
 });
 
 // ---- auth middleware ----
-function requireAuth(req, res, next) {
+// Only the admin session token authorises the all-houses /api/sheets endpoint.
+// A cook has no token; a leftover cook-role token (from an older deploy) is not
+// admin, so it is rejected here too.
+function requireAdmin(req, res, next) {
   const h = req.get('authorization') || '';
   const m = /^Bearer\s+(.+)$/i.exec(h);
   const token = m ? m[1] : '';
   const claims = verifyToken(SESSION_SECRET, token);
-  if (!claims) {
+  if (!claims || claims.role !== 'admin') {
     return res.status(401).json({ error: 'unauthorized' });
   }
   req.auth = claims; // { role, houseId, expiresAt }
@@ -191,7 +135,7 @@ function requireAuth(req, res, next) {
 }
 
 // A cook may only touch their own house. Rewrite the request body so any house
-// reference is pinned to the token's house — a cook can neither read nor write
+// reference is pinned to the URL's house — a cook can neither read nor write
 // another house even by crafting the request directly.
 function scopeBodyForCook(body, houseId) {
   const out = Object.assign({}, body);
@@ -214,12 +158,14 @@ function filterLoadForCook(text, houseId) {
 }
 
 // ---- Apps Script proxy (POST-only routes; the body carries {action, ...}) ----
-app.post('/api/sheets', requireAuth, async (req, res) => {
+// Shared handler. `cookHouseId` non-null → cook scope pinned to that house;
+// null → admin scope (all houses, no filter).
+async function proxySheets(req, res, cookHouseId) {
   if (!APPS_SCRIPT_URL) {
     return res.status(503).json({ error: 'backend_not_configured' });
   }
-  const isCook = req.auth.role === 'cook';
-  const clientBody = isCook ? scopeBodyForCook(req.body || {}, req.auth.houseId) : (req.body || {});
+  const isCook = cookHouseId != null;
+  const clientBody = isCook ? scopeBodyForCook(req.body || {}, cookHouseId) : (req.body || {});
   try {
     // Inject the shared secret AFTER building the client body, so a client can
     // never override or supply it — it stays server-side only.
@@ -234,7 +180,7 @@ app.post('/api/sheets', requireAuth, async (req, res) => {
     let text = await upstream.text();
     // A cook's `load` is filtered down to their own house server-side.
     if (isCook && upstream.ok && (clientBody.action === 'load')) {
-      text = filterLoadForCook(text, req.auth.houseId);
+      text = filterLoadForCook(text, cookHouseId);
     }
     res.status(upstream.status);
     res.set('Cache-Control', 'no-store');
@@ -244,7 +190,17 @@ app.post('/api/sheets', requireAuth, async (req, res) => {
     console.error('Proxy error:', err && err.message);
     res.status(502).json({ error: 'upstream_error', message: String((err && err.message) || err) });
   }
-});
+}
+
+// Cook: NO login. The house is taken from the URL path — /h/<houseId>/api/sheets
+// — the way the cook session token used to carry it. Writes are pinned and
+// `load` is filtered to that one house, so a house URL can reach only its own
+// house's data.
+app.post('/h/:houseId/api/sheets', (req, res) =>
+  proxySheets(req, res, String(req.params.houseId || '')));
+
+// Admin: all houses. Requires the admin session token (ADMIN_PIN login).
+app.post('/api/sheets', requireAdmin, (req, res) => proxySheets(req, res, null));
 
 // ---- 404 for unknown /api routes (before SPA fallback) ----
 app.use('/api', (_req, res) => res.status(404).json({ error: 'not found' }));

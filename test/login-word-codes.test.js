@@ -1,14 +1,14 @@
 'use strict';
 /*
- * Login codes are WORDS, matched case-insensitively with surrounding whitespace
- * ignored — for ADMIN_PIN and COOK_PINS alike. `ramot`, `RAMOT`, ` Ramot ` all
- * authenticate against a stored `RAMOT`.
+ * The ADMIN login code is a WORD, matched case-insensitively with surrounding
+ * whitespace ignored. `ramot`, `RAMOT`, ` Ramot ` all authenticate against a
+ * stored `RAMOT`. (Cooks no longer log in — they use a house URL — so ADMIN_PIN
+ * is the only login code.)
  */
 process.env.NODE_ENV = 'test';
 process.env.APPS_SCRIPT_URL = 'https://example.invalid/exec';
 process.env.APPS_SCRIPT_SECRET = 'shh';
 process.env.ADMIN_PIN = 'RAMOT';
-process.env.COOK_PINS = JSON.stringify({ Pardes: 'pardes' }); // word code -> house id
 process.env.SESSION_SECRET = 'k'.repeat(32);
 
 const test = require('node:test');
@@ -45,11 +45,9 @@ test('word login codes are case-insensitive and trimmed', async (t) => {
   }
 
   for (const variant of ['pardes', 'PARDES', ' Pardes ']) {
-    await t.test(`cook code "${variant.trim()}" → cook bound to its house`, async () => {
+    await t.test(`a non-admin word "${variant.trim()}" is rejected (no cook login)`, async () => {
       const r = await fresh(variant);
-      assert.equal(r.status, 200);
-      assert.equal(r.body.role, 'cook');
-      assert.equal(r.body.houseId, 'pardes');
+      assert.equal(r.status, 401);
     });
   }
 

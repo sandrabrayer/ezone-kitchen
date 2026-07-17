@@ -57,8 +57,7 @@ Set these environment variables on the Railway service (see
 | -------------------- | ------------------------------------------------- |
 | `APPS_SCRIPT_URL`    | the `/exec` URL from step 4                        |
 | `APPS_SCRIPT_SECRET` | the same string as the `SHARED_SECRET` from step 3 |
-| `ADMIN_PIN`          | the admin access code (all houses + budget admin view) |
-| `COOK_PINS`          | optional JSON of per-house cook codes, `{"pin":"houseId"}` |
+| `ADMIN_PIN`          | the admin access code (all houses + budget admin view); the only login |
 | `SESSION_SECRET`     | a random string ≥ 32 chars                          |
 
 ## 6. Verify
@@ -69,9 +68,10 @@ Set these environment variables on the Railway service (see
   `caesarea-rehab`, `pardes`). Then check the Sheet — a `houses` tab (and others)
   should appear and fill in. The seed is idempotent: it only runs on an empty
   tab, so it never duplicates and never overwrites a house you later rename.
-- To give a cook access to a house: copy its house id from the admin all-houses
-  view (or use a seeded id above), add `{"<cookPin>":"<houseId>"}` to
-  `COOK_PINS`, redeploy, and that cook code will open only that house.
+- To give a cook access to a house: hand them that house's URL, `/h/<houseId>`
+  (e.g. `/h/ramot-hashavim`). Opening it goes straight into that one house — no
+  login, and no other house is reachable from it. The house id is the seeded id
+  above (or copy it from the admin all-houses view).
 - Direct `GET` on the `/exec` URL returns `{"ok":true,"service":"ezone-kitchen",
   "note":"POST only"}` — that confirms it's live. All real calls are POST and go
   through the server.

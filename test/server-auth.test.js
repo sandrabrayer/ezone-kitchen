@@ -2,7 +2,7 @@
 process.env.NODE_ENV = 'test';
 process.env.APPS_SCRIPT_URL = 'https://example.invalid/exec';
 process.env.ADMIN_PIN = '4321';
-process.env.COOK_PINS = JSON.stringify({ '1234': 'house_alpha' });
+process.env.APPS_SCRIPT_SECRET = 'shh';
 process.env.SESSION_SECRET = 'k'.repeat(32);
 
 const test = require('node:test');
@@ -68,7 +68,7 @@ test('server auth', async (t) => {
     assert.equal(r.status, 401);
   });
 
-  await t.test('login with unknown PIN → 401', async () => {
+  await t.test('login with unknown PIN → 401 (cooks no longer log in)', async () => {
     _loginAttempts.clear();
     const r = await request(server, 'POST', '/api/login', { body: { pin: '0000' } });
     assert.equal(r.status, 401);
@@ -84,20 +84,12 @@ test('server auth', async (t) => {
     assert.ok(data.token);
   });
 
-  await t.test('a cook PIN → cook token bound to its house; token authorises /api/sheets', async () => {
-    _loginAttempts.clear();
-    const login = await request(server, 'POST', '/api/login', { body: { pin: '1234' } });
-    assert.equal(login.status, 200);
-    const data = JSON.parse(login.text);
-    assert.equal(data.role, 'cook');
-    assert.equal(data.houseId, 'house_alpha');
-    assert.ok(data.token);
-    // With a valid token the request passes auth and reaches the proxy, which
-    // fails to reach the invalid upstream → 502 (NOT 401). That proves the
-    // gate opened.
-    const r = await request(server, 'POST', '/api/sheets', {
+  await t.test('a house URL needs no login and reaches the proxy', async () => {
+    // No token, no login: the house is pinned from the path. The request passes
+    // straight to the proxy, which fails to reach the invalid upstream → 502
+    // (NOT 401). That proves a house URL is served without authentication.
+    const r = await request(server, 'POST', '/h/ramot-hashavim/api/sheets', {
       body: { action: 'load' },
-      headers: { Authorization: `Bearer ${data.token}` },
     });
     assert.equal(r.status, 502);
   });

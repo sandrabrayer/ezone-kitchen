@@ -7,6 +7,44 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Changed — cooks use a house URL (no login); COOK_PINS removed
+
+Cooks no longer log in. Each house has a **dedicated URL** `/h/<houseId>`
+(`/h/ramot-hashavim`, `/h/raanana-asher`, `/h/caesarea-ofroni`,
+`/h/caesarea-rehab`, `/h/pardes`). Opening a house URL goes straight into that
+one house in cook scope — locked to it (no house switcher, no add-house, no
+all-houses view). The house is pinned **server-side from the URL path**, the way
+the cook session token used to carry it, so a house URL can read and write
+**only its own** house's data; no other house is reachable from it. The URL is
+the access — there is no cook login and no per-house secret.
+
+The root URL `/` and the admin (all-houses) view stay behind the `ADMIN_PIN`
+login exactly as before.
+
+- **`server.js`**: cook API is `POST /h/:houseId/api/sheets` (no token) — the
+  path pins the house, `scopeBodyForCook`/`filterLoadForCook` enforce own-house
+  reads and writes. `POST /api/sheets` (all houses) now requires an **admin**
+  token (`requireAdmin`, `role === 'admin'`); `/api/login` accepts only
+  `ADMIN_PIN`. `GET /h/<houseId>` serves the SPA (existing fallback).
+- **`COOK_PINS` removed.** The env var, its parser, and cook-code matching are
+  gone. Startup stays valid when it is absent (it always was optional); the
+  fail-closed checks are unchanged (`APPS_SCRIPT_URL/SECRET`, `ADMIN_PIN`,
+  `SESSION_SECRET`).
+- **Frontend (`public/app.js`)**: detects `/h/<houseId>` → cook mode with no
+  login (house from the path, API calls to `/h/<houseId>/api/sheets`, no token,
+  no logout button); the root URL is the admin surface behind the login. The
+  admin all-houses view now shows each house's URL instead of a `COOK_PINS`
+  mapping hint.
+- **Tests**: `cook-scope` and `no-auth-guard` rewritten for the path model —
+  an unauthenticated house URL gets **only** its own house's data, another
+  house's data is not reachable from it, writes are pinned, and `/api/sheets`
+  (admin) is still **401** without a token. `server-auth`, `login-word-codes`,
+  and `login-env-sanitize` updated: `ADMIN_PIN` is the only login; cooks no
+  longer log in.
+- **Docs**: README (access-model section + URL table), `docs/ARCHITECTURE.md`,
+  `docs/DEPLOYMENT.md`, `docs/APPS-SCRIPT-SETUP.md`, and `.env.example` updated;
+  all `COOK_PINS` references removed.
+
 ### Changed — login codes are words (case-insensitive), not digit PINs
 
 Login codes are now **words** matched **case-insensitively** with surrounding
