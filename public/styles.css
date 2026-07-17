@@ -1,48 +1,58 @@
 /* ezone-kitchen — mobile-first, RTL, no build step.
    Designed for house cooks on phones (big touch targets, generous spacing) and
-   an admin on desktop. One accent-green system refined around #2f7d5b. */
+   an admin on desktop. Palette: a vivid emerald green (built on the ezone
+   ecosystem green) with a warm gold/amber secondary accent for highlights
+   (today badge, active indicator, ₪ figures). Accents are vivid; text stays
+   WCAG-readable. */
 
 :root {
-  /* brand green scale */
-  --brand: #2f7d5b;
-  --brand-strong: #245f45;
-  --brand-600: #388a67;
-  --brand-tint: #e7f2ec;
-  --brand-tint-2: #d3e8dd;
+  /* brand: vivid emerald (built on the ezone ecosystem green #10B981/#34D399),
+     deepened just enough that white button text stays >=4.5:1 WCAG. */
+  --brand: #0b8457;          /* primary fills / active — 4.7:1 on white */
+  --brand-strong: #076b45;   /* hover / text-on-white emphasis — ~6:1 */
+  --brand-600: #0d9f66;      /* brighter emerald for large accents */
+  --brand-tint: #dcf3e8;
+  --brand-tint-2: #bfe8d3;
 
-  /* neutrals */
-  --bg: #eef2f0;
+  /* warm secondary accent (amber / gold) — highlights, not text blocks */
+  --accent: #f59e0b;         /* amber-500: glows, active warmth */
+  --accent-gold: #fbbf24;    /* badge fills (with dark text) */
+  --accent-strong: #b45309;  /* amber-brown: ₪ figures on white — 5:1 */
+  --accent-tint: #fef3c7;
+
+  /* neutrals — a hair of warmth + stronger depth from shadows */
+  --bg: #edf1ea;
   --surface: #ffffff;
-  --surface-2: #f7faf8;
-  --border: #dde5e0;
-  --border-strong: #cbd6cf;
-  --text: #16241d;
-  --muted: #5c6b64;
+  --surface-2: #f5f9f3;
+  --border: #dde5df;
+  --border-strong: #c8d4cd;
+  --text: #14231c;
+  --muted: #566a61;
 
   /* status */
-  --danger: #c0392b;
-  --danger-tint: #fbecea;
-  --warn: #9a6b0b;
-  --warn-bg: #fdf4dd;
-  --warn-border: #ecd9a3;
-  --ok: #2f7d5b;
+  --danger: #dc2626;
+  --danger-tint: #fdecec;
+  --warn: #92400e;           /* amber-800 text — ~7:1 on the warn bg */
+  --warn-bg: #fef3c7;
+  --warn-border: #fcd34d;
+  --ok: #0b8457;
 
-  /* category accents */
-  --cat-groceries: #d99a2b;
-  --cat-vegetables: #4a9d5b;
-  --cat-fruits: #e8724c;
-  --cat-meat: #c0453b;
-  --cat-dry: #b98a4e;
+  /* category accents — vivid + clearly distinct hues */
+  --cat-groceries: #ca8a04;  /* gold */
+  --cat-vegetables: #16a34a; /* green */
+  --cat-fruits: #f97316;     /* orange */
+  --cat-meat: #dc2626;       /* red */
+  --cat-dry: #7c3aed;        /* violet */
 
-  /* meal accents */
-  --meal-breakfast: #e0a92a;
-  --meal-lunch: #2f7d5b;
-  --meal-dinner: #5b6bb5;
+  /* meal accents — distinct warm→cool */
+  --meal-breakfast: #f59e0b; /* amber */
+  --meal-lunch: #16a34a;     /* green */
+  --meal-dinner: #6366f1;    /* indigo */
 
   --radius: 14px;
   --radius-sm: 10px;
-  --shadow: 0 1px 2px rgba(20, 40, 30, 0.06), 0 4px 16px rgba(20, 40, 30, 0.05);
-  --shadow-lg: 0 8px 30px rgba(20, 40, 30, 0.12);
+  --shadow: 0 1px 2px rgba(18, 45, 30, 0.07), 0 8px 22px rgba(18, 45, 30, 0.10);
+  --shadow-lg: 0 14px 34px rgba(18, 45, 30, 0.16);
   --tap: 48px;                 /* minimum touch target */
   --appbar-h: 56px;
   --tabbar-h: 66px;
@@ -86,7 +96,7 @@ button {
 }
 button:active { transform: translateY(1px); }
 button:hover { border-color: var(--brand); }
-button.primary { background: var(--brand); border-color: var(--brand); color: #fff; box-shadow: 0 2px 8px rgba(47, 125, 91, 0.28); }
+button.primary { background: var(--brand); border-color: var(--brand); color: #fff; box-shadow: 0 2px 8px rgba(11, 132, 87, 0.28); }
 button.primary:hover { background: var(--brand-strong); border-color: var(--brand-strong); }
 button.ghost { border-color: transparent; background: var(--surface-2); color: var(--brand-strong); }
 button.ghost:hover { background: var(--brand-tint); border-color: transparent; }
@@ -172,7 +182,7 @@ input::placeholder { color: #9aa8a1; }
   background: var(--surface); border: 1.5px solid var(--border-strong);
   font-weight: 700; color: var(--text);
 }
-.house-chip[aria-current='true'] { background: var(--brand); border-color: var(--brand); color: #fff; box-shadow: 0 2px 8px rgba(47, 125, 91, 0.3); }
+.house-chip[aria-current='true'] { background: var(--brand); border-color: var(--brand); color: #fff; box-shadow: 0 2px 8px rgba(11, 132, 87, 0.3); }
 .house-chip.add { color: var(--brand-strong); font-size: 1.3rem; padding: 0.2rem 0.9rem; }
 
 /* ---------------- bottom tab bar ---------------- */
@@ -195,9 +205,9 @@ input::placeholder { color: #9aa8a1; }
 .tabs .tab-ic { font-size: 1.4rem; line-height: 1; filter: grayscale(0.3); }
 .tabs .tab-tx { font-size: 0.72rem; font-weight: 700; }
 .tabs button[aria-current='true'] {
-  color: var(--brand);
+  color: var(--brand-strong);
   background: linear-gradient(to top, var(--brand-tint), transparent);
-  box-shadow: inset 0 3px 0 var(--brand);
+  box-shadow: inset 0 3px 0 var(--accent); /* warm gold active indicator */
 }
 .tabs button[aria-current='true'] .tab-ic { filter: none; }
 
@@ -229,7 +239,7 @@ input::placeholder { color: #9aa8a1; }
 }
 .count-badge {
   margin-inline-start: auto;
-  background: var(--brand-tint-2); color: var(--brand-strong);
+  background: var(--accent-tint); color: var(--accent-strong);
   border-radius: 999px; padding: 0.05rem 0.6rem; font-size: 0.85rem; font-weight: 800;
 }
 .tag { font-size: 0.72rem; padding: 0.1rem 0.45rem; border-radius: 6px; background: var(--warn-bg); color: var(--warn); font-weight: 700; }
@@ -277,7 +287,7 @@ input::placeholder { color: #9aa8a1; }
 }
 .day-col.today .day-head { background: var(--brand); color: #fff; }
 .day-name { display: inline-flex; align-items: center; gap: 0.5rem; font-size: 1.1rem; }
-.today-badge { background: #fff; color: var(--brand); font-size: 0.7rem; font-weight: 800; padding: 0.1rem 0.5rem; border-radius: 999px; }
+.today-badge { background: var(--accent-gold); color: #3a2a00; font-size: 0.7rem; font-weight: 800; padding: 0.1rem 0.5rem; border-radius: 999px; box-shadow: 0 0 0 1px rgba(180, 83, 9, 0.25); }
 .day-col.today .people-pill { background: rgba(255,255,255,0.25); color: #fff; }
 
 .meal-block { padding: 0.7rem 0.9rem; border-top: 1px solid var(--border); border-inline-start: 4px solid var(--border); }
@@ -321,7 +331,9 @@ td .danger { min-height: 40px; }
 .stat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.7rem; margin-top: 0.4rem; }
 .stat { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.8rem; }
 .stat .label { color: var(--muted); font-size: 0.85rem; font-weight: 600; }
-.stat .value { font-size: 1.5rem; font-weight: 900; letter-spacing: -0.02em; margin-top: 0.15rem; }
+.stat .value { font-size: 1.5rem; font-weight: 900; letter-spacing: -0.02em; margin-top: 0.15rem; color: var(--accent-strong); }
+.stat .value.over { color: var(--danger); }
+.stat .value.under { color: var(--brand-strong); }
 
 /* ---------------- shopping list ---------------- */
 .shop-cat { padding: 0.5rem 0.7rem 0.7rem; }
@@ -391,7 +403,7 @@ td .danger { min-height: 40px; }
   .tabs .tab-tx { font-size: 0.95rem; }
   .tabs button[aria-current='true'] {
     background: var(--brand); color: #fff; border-color: var(--brand);
-    box-shadow: 0 2px 8px rgba(47, 125, 91, 0.3);
+    box-shadow: 0 2px 8px rgba(11, 132, 87, 0.3);
   }
   .house-switcher { top: var(--appbar-h); }
 

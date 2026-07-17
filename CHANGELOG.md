@@ -7,6 +7,24 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Changed — more vivid palette (emerald + warm amber accent)
+
+Refreshed the color system so it reads alive rather than muted, without becoming
+loud. Contrast stays WCAG-readable (vivid accents, not vivid text).
+
+- **Richer primary green**: replaced the grayed forest green (`#2f7d5b`) with a
+  vivid **emerald** built on the ezone ecosystem green (`ezone-managers` uses
+  `#10B981`/`#34D399`), deepened to `#0b8457` so white button text stays ≥4.5:1.
+- **Warm secondary accent (amber/gold)** for highlights: the **"היום" badge**
+  (gold), the **active tab indicator** (gold bar), the **budget ₪ figures**
+  (`#b45309`, ~5:1 on white), and the shopping category **count badges**. The
+  budget variance figure keeps its red/green over/under semantic.
+- **More saturated, clearly distinct category dots** (groceries gold, vegetables
+  green, fruits orange, meat red, dry violet) and meal accent stripes
+  (breakfast amber, lunch green, dinner indigo).
+- **More depth**: a subtle warm background tint and stronger card shadows
+  instead of flat gray-white.
+
 ### Changed — mobile-first UI redesign (cooks on phones)
 
 Redesigned the interface for its real use: house cooks on **their phones** in a
