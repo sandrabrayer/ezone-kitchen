@@ -1,0 +1,15 @@
+{
+  "name": "איזון · CHEF",
+  "short_name": "איזון · CHEF",
+  "lang": "he",
+  "dir": "rtl",
+  "description": "איזון · CHEF: תכנון ותקצוב תפריטים שבועיים לכל בית",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#0b8457",
+  "background_color": "#e2dbcc",
+  "icons": [
+    { "src": "/favicon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any" }
+  ]
+}
