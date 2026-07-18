@@ -9,10 +9,13 @@ into the nested `AppState` the frontend uses.
 | Tab                | Columns (header row, in order)                      | Notes |
 | ------------------ | --------------------------------------------------- | ----- |
 | `houses`           | `id`, `name`                                        | One row per house. |
-| `budget`           | `houseId`, `monthlyBudget`                          | Manual **monthly** target per house. |
+| `budget`           | `houseId`, `monthlyBudget`                          | Legacy single budget; migrated to `monthlyBudgets` on load. |
+| `monthlyBudgets`   | `houseId`, `month`, `budget`, `overrun`, `overrunNote` | Per-month budget + approved overrun (חריגה מאושרת). |
 | `headcount`        | `houseId`, `basePatients`, `baseStaff`, `overridesJson` | One row per house; overrides stored as JSON. |
 | `allergies`        | `id`, `houseId`, `name`, `count`                    | Many rows per house. |
-| `stock`            | `id`, `houseId`, `name`, `category`, `qty`, `unit`  | Many rows per house. `qty` is in `unit`. |
+| `stock`            | `id`, `houseId`, `name`, `category`, `qty`, `unit`, `min` | Many rows per house. `qty`/`min` are in `unit`. |
+| `catalog`          | `name`, `unit`, `category`                          | **Global** (no houseId) — the shared item catalog. |
+| `stockCounts`      | `id`, `houseId`, `date`, `itemsJson`                | A dated pantry snapshot (ספירת מלאי); upserted by (house, date). |
 | `menus`            | `houseId`, `weekOf`, `daysJson`                     | One row per (house, week); the week's nested days are JSON. |
 | `purchases`        | `id`, `houseId`, `weekOf`, `amount`, `note`, `date` | Actual logged spend (grouped by `date`'s month). |
 | `consumption`      | `id`, `houseId`, `weekOf`, `day`, `executedAt`      | A "served" marker per day — makes the stock deduction idempotent. |
@@ -20,8 +23,10 @@ into the nested `AppState` the frontend uses.
 Columns are mapped by **position** (`Code.gs` `readRows_`), so in an existing
 Sheet the `stock.qty` header cell may still literally read `qtyKg` and
 `budget.monthlyBudget` still read `weeklyBudget` — legacy kilogram/weekly values
-carry over unchanged. The old `ingredientPrices` tab is no longer read or written
-(pricing was removed).
+carry over unchanged. The `stock` tab gained a trailing `min` column (rows without
+it read `min = 0`). The old `ingredientPrices` tab is no longer read or written.
+**Adding columns/tabs requires an Apps Script redeploy** (new version of the
+existing deployment).
 
 Tabs are created automatically with their header row on first write
 (`sheet_()` in `Code.gs`). Add columns by **appending** — the code maps by
@@ -30,14 +35,20 @@ header name, but keeping existing columns in place avoids surprises.
 ## Assembled `AppState` (what `load` returns / the client holds)
 
 ```
+load → {
+  houses: [ House ],
+  catalog: [ { name, unit, category } ]        // GLOBAL shared item catalog
+}
 House {
   id, name,
-  monthlyBudget,                             // from `budget` (manual, per month)
+  budgets     { [month]: { budget, overrun, overrunNote } },  // per-month; from `monthlyBudgets`
+  monthlyBudget,                             // legacy single budget (migrated on load)
   headcount { basePatients, baseStaff, overrides },  // overrides = { [day]: {patients?, staff?} }
   allergies   [ { id, name, count } ],
-  stock       [ { id, name, category, qty, unit } ],
+  stock       [ { id, name, category, qty, unit, minQty } ],  // minQty = par level
   purchases   [ { id, weekOf, amount, note, date } ],
   consumption [ { id, weekOf, day, executedAt } ],   // served-day markers (idempotency)
+  stockCounts [ { id, date, items: [ StockItem ] } ], // dated snapshots
   weeks       { [weekOf]: { weekOf, days } }   // days = { [day]: { breakfast:[Dish], lunch:[Dish], dinner:[Dish] } }
 }
 Dish       { id, name, ingredients: [ Ingredient ] }
@@ -74,14 +85,16 @@ open (no login/roles).
 weeks[weekOf]  (headcount is NOT an input — quantities are dish totals)
         │  aggregateWeek(week, days?)  → Σ ingredient TOTALS (base unit)   (per ingredient)
         ▼
-        │  applyBuffer(0.20)         → bufferedQty
-        │  subtractStock(stock)      → toBuyQty = max(0, buffered − matching stock)
+        │  applyBuffer(0.20)           → bufferedQty
+        │  toBuyQty = max( max(0, buffered − stock),      // menu shortfall
+        │                  max(0, minimum − stock) )      // top-up to par level
         ▼
-ShoppingList (projection only; grouped by the 5 categories — never mutates stock)
+ShoppingList (projection only; UNION of menu items + pantry items with a minimum;
+grouped by the 5 categories — never mutates stock)
 
 Weekly plan (צפי שבועי): same aggregateWeek/buildShoppingList, optional `days`
-subset for "from today"; row "חסר" = subtractStock(requiredQty, stockQty) (raw
-need, no buffer).
+subset for "from today"; row "חסר" = max(raw menu shortfall, top-up to minimum),
+no buffer. Pantry items below their minimum are flagged (`isBelowMin`).
 
 Marking a day served ("בוצע"), separately and idempotently:
         dayConsumption(week, day)  → Σ ingredient totals for that day   (NO buffer)

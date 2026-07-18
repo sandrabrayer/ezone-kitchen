@@ -64,34 +64,36 @@ Sheet directly.
    Meals are **collapsible** (accordion) with a dish-name summary line, so a
    day card stays compact. Each dish is a **name + ingredients**
    `[{ name, category, qty, unit }]`, where `qty` is the **total for the dish**
-   (not per diner); the dish name is free text with a **dropdown of existing
-   dishes** (picking one clones its ingredients). One-click **"Copy last week"**.
-3. **Five fixed ingredient categories** everywhere (menu, stock, shopping):
-   groceries (מכולת), vegetables (ירקות), fruits (פירות), meat (בשר),
-   dry ingredients (יבשים).
-4. **Units** — every quantity picks a unit from a fixed list: ק"ג / גרם /
-   יחידות / ליטר / מ"ל (kg / g / unit / l / ml). Math converts within a family
-   (kg↔g, l↔ml); mass, volume and count never mix.
-5. **Allergies** — per house, a list with counts (e.g. `גלוטן ×2`). Shown
-   prominently on the menu screen and printed on the shopping list.
-   Informational only in v1 (no enforcement).
-6. **Stock (מלאי)** — per house, what's on hand per ingredient (with its unit),
-   grouped by the five categories. The cook updates it manually.
-7. **Weekly plan (צפי שבועי)** — every ingredient needed across the week vs
-   current stock, with the shortfall to buy (`פריט | נדרש | במלאי | חסר`).
-   Aggregated by **name + unit family**; shortfall rows are highlighted. Filter
-   **whole week / from today**, with a "days remaining" indicator. Reuses the
-   shopping-list aggregation (raw need, no buffer).
-8. **Inventory-first shopping list** — projection only: `sum(week's ingredient
-   totals)` → **+20% buffer** → **− matching stock** → net to buy (never
-   negative), matched by **name + unit family**. Grouped by the five categories.
-   **Printable** and **WhatsApp export**.
+   (not per diner). Ingredient rows are **name | qty | unit | delete** — the name
+   is a **catalog combobox** (see below) and the category comes from the catalog.
+   One-click **"Copy last week"**.
+3. **Shared item catalog** — a global list of `{ name, unit, category }` seeded
+   from existing stock + menu items. **Every** item/ingredient name field is a
+   searchable **dropdown that still accepts free text**; new names are auto-added.
+4. **Five fixed ingredient categories** everywhere (מכולת / ירקות / פירות / בשר /
+   יבשים) and a fixed **unit** list ק"ג / גרם / יחידות / ליטר / מ"ל. Math converts
+   within a family (kg↔g, l↔ml); mass, volume and count never mix.
+5. **Allergies** — per house, a list with counts (e.g. `גלוטן ×2`), shown on the
+   menu and printed on the shopping list. Informational only.
+6. **Stock (מלאי)** — per house, what's on hand per item (with its unit) and a
+   **minimum-stock (par) level**; items **below minimum are highlighted red**.
+   A **"ספירת מלאי"** count mode edits every quantity in one dated pass and saves
+   a **snapshot** (restorable); the header shows the last count date.
+7. **Weekly plan (צפי שבועי)** — every item needed across the week vs current
+   stock, with the shortfall to buy (`פריט | נדרש | מינימום | במלאי | חסר`).
+   Filter **whole week / from today** with a "days remaining" indicator; "חסר"
+   reflects both the menu need and the top-up to minimum.
+8. **Inventory-first shopping list** — projection only: for each item buy the
+   **larger** of the menu shortfall (`week totals +20% − stock`) and the **top-up
+   to its minimum** (never the sum), matched by **name + unit family**. Grouped by
+   the five categories. **Printable** and **WhatsApp export**.
 9. **Serve a day (בוצע)** — marking a day served deducts that day's dish totals
-   (**no** buffer) from the pantry. **Idempotent**: a day can be deducted only
-   once.
-10. **Budget** — a **monthly** budget per house (entered manually), log actual
-    spend, and see **תקציב / בפועל / מול תקציב** in ₪, plus an **admin view
-    across all houses**. No pricing/estimates.
+   (**no** buffer) from the pantry. **Idempotent**: a day is deducted only once.
+10. **Budget (תקציב)** — a **monthly** budget kept **per month** (entered manually
+    with thousands separators), an **approved overrun (חריגה מאושרת)** with a note,
+    and tiles **תקציב / חריגה מאושרת / בפועל / מול תקציב** in ₪ where
+    `מול תקציב = (budget + approved overrun) − actual`. Plus an **admin view across
+    all houses**. No pricing/estimates.
 
 Out of scope for v1 (by design): a full recipe bank, suppliers, kosher tagging
 (all menus are kosher), dashboard sync, and any per-ingredient pricing.
@@ -110,10 +112,14 @@ aggregateWeek(week, days?)   Σ ingredient TOTALS over the days (default: whole 
 applyBuffer()                × 1.20   (the fixed 20% rule — one function, one place)
 subtractStock()              max(0, need − onHand)   (never negative)
 buildShoppingList(week, stock, bufferRate?, days?)
-                             aggregate → buffer → deduct matching stock → group by 5 categories
+                             per item: max(menu shortfall, top-up to minimum); group by 5 cats
+isBelowMin(item)             is a pantry item under its minimum (par) level?
 dayConsumption(week, day)    a single day's dish totals (NO buffer)
 applyConsumption()           deducts served quantities from the pantry (the "בוצע" action)
-summariseBudget()            monthly budget vs actual spend → תקציב / בפועל / מול תקציב
+makeStockCount / stockFromCount   dated pantry snapshot ⇄ restore
+mergeCatalog / catalogLookup      shared item catalog (dedup by name)
+summariseBudget(budget, actual, overrun)   → תקציב / חריגה מאושרת / בפועל / מול תקציב
+parseMoney / groupThousands  budget entry with thousands separators, stored numeric
 ```
 
 Menu quantities are **dish totals**, so headcount does not scale them —

@@ -34,6 +34,18 @@ function setStatus(text) {
 function $(sel, root) { return (root || document).querySelector(sel); }
 function clampNum(v) { const n = parseFloat(v); return Number.isFinite(n) && n > 0 ? n : 0; }
 function clampInt(v) { const n = parseInt(v, 10); return Number.isFinite(n) && n > 0 ? n : 0; }
+/* Format a partially-typed money string with thousands separators, preserving a
+   trailing dot / up to two decimals, without changing the stored numeric value
+   (KD.parseMoney is the source of truth for the number). */
+function formatMoneyTyping(raw) {
+  let s = String(raw == null ? '' : raw).replace(/[^0-9.]/g, '');
+  const firstDot = s.indexOf('.');
+  if (firstDot !== -1) s = s.slice(0, firstDot + 1) + s.slice(firstDot + 1).replace(/\./g, '');
+  let [intPart, dec] = s.split('.');
+  intPart = (intPart || '').replace(/^0+(?=\d)/, '');
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return dec !== undefined ? grouped + '.' + dec.slice(0, 2) : grouped;
+}
 
 /* ============================ API client ============================ */
 /* The app is open — no auth. Every call POSTs {action, ...} to /api/sheets,
@@ -75,11 +87,17 @@ const persist = {
   consumption: (h) => scheduleSave('cons:' + h.id, () => api('saveConsumption', { houseId: h.id, consumption: h.consumption })),
   menu: (h, weekOf) => scheduleSave('menu:' + h.id + ':' + weekOf, () =>
     api('saveMenu', { houseId: h.id, weekOf, days: h.weeks[weekOf].days })),
+  catalog: () => scheduleSave('catalog', () => api('saveCatalog', { catalog: state.catalog })),
+  budget: (h, month) => scheduleSave('budget:' + h.id + ':' + month, () =>
+    api('saveBudget', { houseId: h.id, month, budget: budgetForMonth(h, month) })),
+  stockCount: (h, count) => scheduleSave('cnt:' + h.id + ':' + count.date, () =>
+    api('saveStockCount', { houseId: h.id, count })),
 };
 
 /* ============================ state ============================ */
 const state = {
   houses: [],
+  catalog: [], // shared item catalog { name, unit, category }
   activeHouseId: null,
   currentWeekOf: KD.weekStart(new Date()),
   currentMonth: KD.monthKey(new Date()),
@@ -87,10 +105,28 @@ const state = {
   mealOpen: {}, // transient accordion state, keyed by `${day}:${meal}`
   checked: {},  // transient shopping-list check-off state (ingredient key -> true)
   planFromToday: false, // weekly-plan filter: whole week vs from today onward
+  countMode: false,     // stock-count (ספירת מלאי) mode toggle
+  countDate: null,      // ISO date of the count being taken
+  countValues: {},      // transient qty edits in count mode, keyed by stock id
 };
 
 function activeHouse() {
   return state.houses.find((h) => h.id === state.activeHouseId) || state.houses[0] || null;
+}
+
+/* The per-month budget record { budget, overrun, overrunNote } for a house,
+   created lazily. Each month keeps its own figures. */
+function budgetForMonth(house, month) {
+  if (!house.budgets) house.budgets = {};
+  if (!house.budgets[month]) house.budgets[month] = { budget: 0, overrun: 0, overrunNote: '' };
+  return house.budgets[month];
+}
+
+/* Add any names to the shared catalog and persist if it changed. */
+function catalogAdd(entries) {
+  const before = state.catalog.length;
+  state.catalog = KD.mergeCatalog(state.catalog, entries);
+  if (state.catalog.length !== before) persist.catalog();
 }
 function ensureWeek(house, weekOf) {
   if (!house.weeks) house.weeks = {};
@@ -120,12 +156,15 @@ function normStock(s) {
   s = s || {};
   const raw = s.qty != null ? s.qty : s.qtyKg;
   const value = Number(raw);
+  const rawMin = s.minQty != null ? s.minQty : s.min;
+  const min = Number(rawMin);
   return {
     id: s.id || KD.newId('stk'),
     name: String(s.name || ''),
     category: KD.isCategory(s.category) ? s.category : 'groceries',
     qty: Number.isFinite(value) && value > 0 ? value : 0,
     unit: KD.safeUnit(s.unit),
+    minQty: Number.isFinite(min) && min > 0 ? min : 0,
   };
 }
 
@@ -133,17 +172,25 @@ function normStock(s) {
 async function loadState() {
   const d = await api('load', {});
   state.houses = Array.isArray(d.houses) ? d.houses : [];
+  state.catalog = KD.mergeCatalog(Array.isArray(d.catalog) ? d.catalog : [], []);
+  const catalogSeed = []; // names discovered in stock + menus, seeded into the catalog
   for (const h of state.houses) {
     h.headcount = h.headcount || KD.emptyHeadcount();
     h.allergies = h.allergies || [];
     h.stock = (h.stock || []).map(normStock);
     h.purchases = h.purchases || [];
     h.consumption = h.consumption || []; // served-day markers (idempotency)
+    h.stockCounts = h.stockCounts || []; // dated pantry snapshots
+    h.budgets = h.budgets || {};         // per-month { budget, overrun, overrunNote }
     h.weeks = h.weeks || {};
-    // Monthly budget replaces the old weekly one; carry a legacy value over.
-    if (typeof h.monthlyBudget !== 'number') {
-      h.monthlyBudget = typeof h.weeklyBudget === 'number' ? h.weeklyBudget : 0;
+    // Legacy single monthlyBudget → migrate into the current month if that month
+    // has no explicit budget yet (each month is independent from here on).
+    const legacy = typeof h.monthlyBudget === 'number' ? h.monthlyBudget
+      : (typeof h.weeklyBudget === 'number' ? h.weeklyBudget : 0);
+    if (legacy > 0 && !h.budgets[state.currentMonth]) {
+      h.budgets[state.currentMonth] = { budget: legacy, overrun: 0, overrunNote: '' };
     }
+    h.stock.forEach((s) => { if (s.name) catalogSeed.push({ name: s.name, unit: s.unit, category: s.category }); });
     // Normalise every stored ingredient to { qty, unit }.
     for (const weekOf of Object.keys(h.weeks)) {
       const wk = h.weeks[weekOf];
@@ -155,11 +202,23 @@ async function loadState() {
           plan[meal] = (plan[meal] || []).map((dish) => ({
             id: dish.id || KD.newId('dish'),
             name: String(dish.name || ''),
-            ingredients: (dish.ingredients || []).map(normIngredient),
+            ingredients: (dish.ingredients || []).map((ing) => {
+              const n = normIngredient(ing);
+              if (n.name) catalogSeed.push({ name: n.name, unit: n.unit, category: n.category });
+              return n;
+            }),
           }));
         }
       }
     }
+  }
+  // Self-heal the catalog from existing items; persist only if it grew.
+  const mergedCatalog = KD.mergeCatalog(state.catalog, catalogSeed);
+  if (mergedCatalog.length !== state.catalog.length) {
+    state.catalog = mergedCatalog;
+    persist.catalog();
+  } else {
+    state.catalog = mergedCatalog;
   }
   // Keep the current house if it still exists, else default to the first.
   if (!state.houses.some((h) => h.id === state.activeHouseId)) {
@@ -377,6 +436,7 @@ function renderMenu(house) {
 
   return `${allergyBanner(house)}
     <datalist id="dishNames">${dishOptions}</datalist>
+    ${catalogDatalist()}
     <div class="week-bar no-print">
       <button class="icon-btn" data-act="weekPrev" aria-label="שבוע קודם">→</button>
       <div class="week-label"><span class="muted">שבוע</span><strong>${esc(KD.formatDateHe(weekOf))}</strong></div>
@@ -397,16 +457,22 @@ function qtyStep(unit) {
   return (unit === 'g' || unit === 'ml' || unit === 'unit') ? '1' : '0.01';
 }
 
+/* Shared datalist of catalog item names — referenced by every name field
+   (menu ingredients + pantry items) so each is a searchable combobox that still
+   accepts free text. */
+function catalogDatalist() {
+  return `<datalist id="catalogNames">${state.catalog.map((c) => `<option value="${esc(c.name)}"></option>`).join('')}</datalist>`;
+}
+
+/* A menu ingredient row: name (catalog combobox) | qty | unit | delete.
+   Category is derived from the catalog by name (no per-row category box). */
 function renderDish(day, meal, dish) {
   const ings = (dish.ingredients || []).map((ing) => {
     const unit = KD.safeUnit(ing.unit);
-    const catOpts = KD.CATEGORIES.map((c) =>
-      `<option value="${c}" ${c === ing.category ? 'selected' : ''}>${esc(KD.CATEGORY_LABELS_HE[c])}</option>`).join('');
     const d = `data-day="${day}" data-meal="${meal}" data-dish="${esc(dish.id)}" data-ing="${esc(ing.id)}"`;
     return `<div class="ing">
-      <input class="ing-name" value="${esc(ing.name)}" placeholder="מרכיב" data-act="ingName" ${d} />
       <div class="ing-meta">
-        <select class="ing-cat" data-act="ingCat" ${d}>${catOpts}</select>
+        <input class="ing-name" list="catalogNames" value="${esc(ing.name)}" placeholder="מרכיב" data-act="ingName" ${d} />
         <span class="u">
           <input type="number" inputmode="decimal" min="0" step="${qtyStep(unit)}" value="${ing.qty || ''}" placeholder="0" data-act="ingQty" ${d} />
           <select data-act="ingUnit" ${d}>${unitOptions(unit)}</select>
@@ -476,7 +542,16 @@ function renderAllergiesCard(house) {
 }
 
 /* --------------------------- Stock view --------------------------- */
+/* The last saved stock-count date, if any (latest by ISO date). */
+function lastCount(house) {
+  const counts = house.stockCounts || [];
+  if (!counts.length) return null;
+  return counts.slice().sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
+}
+
 function renderStock(house) {
+  if (state.countMode) return renderStockCount(house);
+
   const active = state.stockCat || 'groceries';
   state.stockCat = active;
   const tabs = KD.CATEGORIES.map((c) =>
@@ -484,22 +559,71 @@ function renderStock(house) {
   const items = house.stock.filter((s) => s.category === active);
   const rows = items.length ? items.map((item) => {
     const unit = KD.safeUnit(item.unit);
+    const below = KD.isBelowMin(item);
     const catOpts = KD.CATEGORIES.map((c) => `<option value="${c}" ${c === item.category ? 'selected' : ''}>${esc(KD.CATEGORY_LABELS_HE[c])}</option>`).join('');
-    return `<tr>
-      <td><input value="${esc(item.name)}" placeholder="שם מרכיב" data-act="stkName" data-id="${esc(item.id)}" /></td>
+    return `<tr class="${below ? 'below-min' : ''}">
+      <td><input list="catalogNames" value="${esc(item.name)}" placeholder="שם מרכיב" data-act="stkName" data-id="${esc(item.id)}" /></td>
       <td><select data-act="stkCat" data-id="${esc(item.id)}">${catOpts}</select></td>
-      <td><span class="u"><input type="number" min="0" step="${qtyStep(unit)}" value="${item.qty || ''}" data-act="stkQty" data-id="${esc(item.id)}" style="width:80px" />
+      <td><span class="u"><input type="number" min="0" step="${qtyStep(unit)}" value="${item.qty || ''}" data-act="stkQty" data-id="${esc(item.id)}" style="width:74px" />
         <select data-act="stkUnit" data-id="${esc(item.id)}">${unitOptions(unit)}</select></span></td>
+      <td><input type="number" min="0" step="${qtyStep(unit)}" value="${item.minQty || ''}" placeholder="—" data-act="stkMin" data-id="${esc(item.id)}" style="width:70px" title="מלאי מינימום"${below ? ' class="over"' : ''} /></td>
       <td><button class="danger" data-act="stkDel" data-id="${esc(item.id)}">מחק</button></td>
     </tr>`;
-  }).join('') : `<tr><td colspan="4" class="muted">אין פריטים בקטגוריה זו.</td></tr>`;
+  }).join('') : `<tr><td colspan="5" class="muted">אין פריטים בקטגוריה זו.</td></tr>`;
+
+  const last = lastCount(house);
+  const countHistory = (house.stockCounts || []).slice().sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 6);
 
   return `<div class="card">
-    <h2>מלאי — ${esc(house.name)}</h2>
-    <p class="muted">מה קיים במחסן כרגע. מתעדכן ידנית. נחסר מרשימת הקניות; לחיצה על "בוצע" ביום מסוים מנכה את המנות שהוגשו מהמלאי.</p>
+    ${catalogDatalist()}
+    <div class="row between">
+      <h2 style="margin:0">מלאי — ${esc(house.name)}</h2>
+      <button class="primary" data-act="countStart">📋 ספירת מלאי</button>
+    </div>
+    <p class="muted">מה קיים במחסן כרגע. נחסר מרשימת הקניות ומהצפי; פריט מתחת ל<strong>מלאי מינימום</strong> מסומן באדום.
+      ${last ? `<br>ספירה אחרונה: <strong>${esc(KD.formatDateHe(last.date))}</strong>` : ''}</p>
     <div class="subtabs">${tabs}</div>
-    <table><thead><tr><th>מרכיב</th><th>קטגוריה</th><th>כמות במלאי</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+    <table><thead><tr><th>מרכיב</th><th>קטגוריה</th><th>כמות במלאי</th><th>מלאי מינימום</th><th></th></tr></thead><tbody>${rows}</tbody></table>
     <button class="add-row" data-act="stkAdd" data-cat="${active}" style="margin-top:.7rem">＋ הוסף פריט ל${esc(KD.CATEGORY_LABELS_HE[active])}</button>
+    ${countHistory.length ? `<details class="count-history"><summary class="muted">היסטוריית ספירות (${countHistory.length})</summary>
+      <ul class="count-list">${countHistory.map((c) => `<li><span>${esc(KD.formatDateHe(c.date))} · ${(c.items || []).length} פריטים</span>
+        <button class="ghost" data-act="countRestore" data-date="${esc(c.date)}">שחזר</button></li>`).join('')}</ul></details>` : ''}
+  </div>`;
+}
+
+/* Stock-count mode: every quantity editable in one pass, across all categories,
+   dated, saved atomically ("שמור ספירה") — overwrites stock AND stores a
+   snapshot. Transient edits live in state.countValues until saved. */
+function renderStockCount(house) {
+  const date = state.countDate || KD.toISODate(new Date());
+  state.countDate = date;
+  const sections = KD.CATEGORIES.map((c) => {
+    const items = house.stock.filter((s) => s.category === c);
+    if (!items.length) return '';
+    const rows = items.map((item) => {
+      const unit = KD.safeUnit(item.unit);
+      const val = state.countValues[item.id] != null ? state.countValues[item.id] : item.qty;
+      return `<tr>
+        <td>${esc(item.name)}</td>
+        <td class="muted">${esc(KD.UNIT_LABELS_HE[unit])}</td>
+        <td><input type="number" min="0" step="${qtyStep(unit)}" value="${val || ''}" placeholder="0" data-act="countQty" data-id="${esc(item.id)}" style="width:90px" /></td>
+      </tr>`;
+    }).join('');
+    return `<h3 class="count-cat"><span class="cat-dot cat-${c}" aria-hidden="true"></span>${esc(KD.CATEGORY_LABELS_HE[c])}</h3>
+      <table><tbody>${rows}</tbody></table>`;
+  }).join('');
+
+  return `<div class="card">
+    <div class="row between">
+      <h2 style="margin:0">ספירת מלאי — ${esc(house.name)}</h2>
+      <label class="muted">תאריך: <input type="date" value="${esc(date)}" data-act="countDate" /></label>
+    </div>
+    <p class="muted">עדכנו את כל הכמויות בפעם אחת. השמירה תעדכן את המלאי ותשמור צילום מצב בתאריך זה.</p>
+    ${house.stock.length ? sections : '<p class="muted">אין פריטים במלאי. הוסיפו פריטים תחילה.</p>'}
+    <div class="row" style="margin-top:.8rem">
+      <button class="primary" data-act="countSave">✓ שמור ספירה</button>
+      <button class="ghost" data-act="countCancel">ביטול</button>
+    </div>
   </div>`;
 }
 
@@ -519,17 +643,25 @@ function renderPlan(house) {
   const days = fromToday ? KD.DAYS.slice(todayIdx) : KD.DAYS;
   const list = KD.buildShoppingList(week, house.stock, undefined, days);
 
+  // חסר reflects BOTH the raw menu need and the minimum (par) top-up: the larger
+  // gap between stock and what we should hold. (Matches the shopping-list rule,
+  // minus the purchasing buffer.)
+  const planMissing = (line) => Math.max(
+    KD.subtractStock(line.requiredQty, line.stockQty),
+    KD.subtractStock(line.minQty, line.stockQty),
+  );
   const rows = list.lines.map((line) => {
-    const missing = KD.subtractStock(line.requiredQty, line.stockQty);
+    const missing = planMissing(line);
     const short = missing > 0;
     return `<tr class="${short ? 'plan-short' : ''}">
       <td>${esc(line.name)}</td>
       <td class="num">${fmtQty(line.requiredQty, line.unit)}</td>
+      <td class="num muted">${line.minQty > 0 ? fmtQty(line.minQty, line.unit) : '—'}</td>
       <td class="num muted">${fmtQty(line.stockQty, line.unit)}</td>
       <td class="num ${short ? 'over' : 'under'}">${short ? fmtQty(missing, line.unit) : '—'}</td>
     </tr>`;
   }).join('');
-  const shortCount = list.lines.filter((l) => KD.subtractStock(l.requiredQty, l.stockQty) > 0).length;
+  const shortCount = list.lines.filter((l) => planMissing(l) > 0).length;
   const needLabel = fromToday ? 'נדרש (מהיום)' : 'נדרש לשבוע';
 
   return `${allergyBanner(house)}
@@ -538,13 +670,13 @@ function renderPlan(house) {
         <h2 style="margin:0">צפי שבועי — ${esc(house.name)}</h2>
         ${isThisWeek ? `<span class="pill">נותרו ${daysRemaining} ימים</span>` : ''}
       </div>
-      <p class="muted">שבוע ${esc(KD.formatDateHe(weekOf))} · מה נדרש מול המלאי הקיים.</p>
+      <p class="muted">שבוע ${esc(KD.formatDateHe(weekOf))} · מה נדרש מול המלאי הקיים (כולל השלמה למלאי מינימום).</p>
       <div class="subtabs">
         <button data-act="planScope" data-scope="week" aria-current="${!fromToday}">כל השבוע</button>
         <button data-act="planScope" data-scope="today" aria-current="${fromToday}">מהיום והלאה</button>
       </div>
       ${list.lines.length ? `<table>
-        <thead><tr><th>פריט</th><th>${needLabel}</th><th>במלאי</th><th>חסר (לקנייה)</th></tr></thead>
+        <thead><tr><th>פריט</th><th>${needLabel}</th><th>מינימום</th><th>במלאי</th><th>חסר (לקנייה)</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
       <p class="muted" style="margin-top:.6rem">${shortCount ? `⚠️ ${shortCount} פריטים חסרים במלאי` : '✓ המלאי מכסה את כל הצרכים'}</p>`
@@ -565,11 +697,14 @@ function renderShopping(house) {
     const items = rows.map((r) => {
       const key = c + ':' + r.name;
       const done = state.checked[key] ? ' done' : '';
+      const sub = (r.bufferedQty > 0 ? 'נדרש ' + fmtQty(r.bufferedQty, r.unit) + ' · ' : '')
+        + (r.minQty > 0 ? 'מינ׳ ' + fmtQty(r.minQty, r.unit) + ' · ' : '')
+        + 'במלאי ' + fmtQty(r.stockQty, r.unit);
       return `<li class="shop-item${done}" data-act="checkItem" data-key="${esc(key)}">
         <span class="check" aria-hidden="true"></span>
         <span class="shop-body">
           <span class="shop-name">${esc(r.name)}</span>
-          <span class="shop-sub muted">נדרש ${fmtQty(r.bufferedQty, r.unit)} · במלאי ${fmtQty(r.stockQty, r.unit)}</span>
+          <span class="shop-sub muted">${sub}</span>
         </span>
         <span class="shop-qty num">${fmtQty(r.toBuyQty, r.unit)}</span>
       </li>`;
@@ -628,12 +763,14 @@ function shoppingListText(house) {
 }
 
 /* --------------------------- Budget view --------------------------- */
-/* MONTHLY budget, entered manually. Three figures only: תקציב, בפועל, מול
-   תקציב (remaining). No pricing, no menu-based estimate. */
+/* MONTHLY budget, entered manually and kept PER MONTH. Four figures: תקציב,
+   חריגה מאושרת (approved overrun), בפועל, מול תקציב = (budget + overrun) −
+   actual. Amounts shown/typed with thousands separators; stored numeric. */
 function renderBudget(house) {
   const month = state.currentMonth;
+  const b = budgetForMonth(house, month);
   const actual = KD.actualSpendForMonth(house.purchases, month);
-  const summary = KD.summariseBudget(house.monthlyBudget, actual);
+  const summary = KD.summariseBudget(b.budget, actual, b.overrun);
 
   const monthPurchases = house.purchases.filter((p) => KD.monthOf(p.date) === month);
   const purchaseRows = monthPurchases.length ? monthPurchases.map((p) => `<tr>
@@ -641,17 +778,22 @@ function renderBudget(house) {
       <td><button class="danger" data-act="purDel" data-id="${esc(p.id)}">מחק</button></td></tr>`).join('') : '';
 
   return `<div class="card">
-      <div class="row between"><h2 style="margin:0">תקציב — ${esc(house.name)}</h2>
-        <label class="muted">תקציב חודשי (₪): <input type="number" min="0" step="0.01" value="${house.monthlyBudget || ''}" data-act="monthlyBudget" style="width:120px" /></label></div>
+      <h2 style="margin:0 0 .3rem">תקציב — ${esc(house.name)}</h2>
       <div class="month-bar">
         <button class="icon-btn" data-act="monthPrev" aria-label="חודש קודם">→</button>
         <strong>${esc(KD.formatMonthHe(month))}</strong>
         <button class="icon-btn" data-act="monthNext" aria-label="חודש הבא">←</button>
       </div>
-      <div class="stat-grid stat-grid-3">
-        <div class="stat"><div class="label">תקציב</div><div class="value num">${fmtCurrency(summary.budget)}</div></div>
-        <div class="stat"><div class="label">בפועל</div><div class="value num">${fmtCurrency(summary.actual)}</div></div>
-        <div class="stat"><div class="label">מול תקציב</div><div class="value num ${summary.overBudget ? 'over' : 'under'}">${fmtCurrency(summary.remaining)}</div></div>
+      <div class="row" style="flex-wrap:wrap;gap:1rem">
+        <label class="muted">תקציב חודשי (₪): <input type="text" inputmode="decimal" value="${esc(KD.groupThousands(b.budget))}" data-act="budgetAmount" style="width:120px" /></label>
+        <label class="muted">חריגה מאושרת (₪): <input type="text" inputmode="decimal" value="${b.overrun ? esc(KD.groupThousands(b.overrun)) : ''}" placeholder="0" data-act="overrunAmount" style="width:110px" /></label>
+        <label class="muted" style="flex:1;min-width:180px">הערת חריגה: <input value="${esc(b.overrunNote || '')}" placeholder="סיבת האישור (לא חובה)" data-act="overrunNote" style="width:100%" /></label>
+      </div>
+      <div class="stat-grid stat-grid-4">
+        <div class="stat"><div class="label">תקציב</div><div class="value num" id="tileBudget">${fmtCurrency(summary.budget)}</div></div>
+        <div class="stat"><div class="label">חריגה מאושרת</div><div class="value num" id="tileOverrun">${fmtCurrency(summary.overrun)}</div></div>
+        <div class="stat"><div class="label">בפועל</div><div class="value num" id="tileActual">${fmtCurrency(summary.actual)}</div></div>
+        <div class="stat"><div class="label">מול תקציב</div><div class="value num ${summary.overBudget ? 'over' : 'under'}" id="tileRemaining">${fmtCurrency(summary.remaining)}</div></div>
       </div>
     </div>
     <div class="card">
@@ -665,15 +807,35 @@ function renderBudget(house) {
     </div>`;
 }
 
+/* Recompute the four budget tiles in place (no re-render, so the input keeps
+   focus while typing) — the fix for the "input says 20,000 but tile shows
+   ₪10,000" desync. */
+function updateBudgetTiles(house) {
+  const month = state.currentMonth;
+  const b = budgetForMonth(house, month);
+  const s = KD.summariseBudget(b.budget, KD.actualSpendForMonth(house.purchases, month), b.overrun);
+  const set = (id, txt, over) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = txt;
+    if (over !== undefined) { el.classList.toggle('over', over); el.classList.toggle('under', !over); }
+  };
+  set('tileBudget', fmtCurrency(s.budget));
+  set('tileOverrun', fmtCurrency(s.overrun));
+  set('tileActual', fmtCurrency(s.actual));
+  set('tileRemaining', fmtCurrency(s.remaining), s.overBudget);
+}
+
 /* --------------------------- Admin view --------------------------- */
 function renderAdmin() {
   const month = state.currentMonth;
   let tB = 0, tA = 0;
   const rows = state.houses.map((house) => {
+    const b = budgetForMonth(house, month);
     const actual = KD.actualSpendForMonth(house.purchases, month);
-    const s = KD.summariseBudget(house.monthlyBudget, actual);
+    const s = KD.summariseBudget(b.budget, actual, b.overrun);
     const people = KD.baseTotal(house.headcount);
-    tB += s.budget; tA += s.actual;
+    tB += s.budget + s.overrun; tA += s.actual;
     return `<tr>
       <td><strong>${esc(house.name)}</strong><div class="muted mono" style="font-size:.7rem">${esc(house.id)}</div></td>
       <td class="num">${people}</td>
@@ -731,8 +893,13 @@ function onInput(e) {
       const dish = findDish(house, t.dataset.day, t.dataset.meal, t.dataset.dish);
       const ing = dish && dish.ingredients.find((i) => i.id === t.dataset.ing);
       if (!ing) break;
-      if (act === 'ingName') ing.name = t.value;
-      else ing.qty = clampNum(t.value);
+      if (act === 'ingName') {
+        ing.name = t.value;
+        // Derive category (and, for a fresh row, the default unit) from the
+        // shared catalog when the typed name matches an existing item.
+        const hit = KD.catalogLookup(state.catalog, t.value);
+        if (hit) { ing.category = hit.category; if (!ing.qty) ing.unit = hit.unit; }
+      } else ing.qty = clampNum(t.value);
       persist.menu(house, state.currentWeekOf);
       break;
     }
@@ -742,10 +909,41 @@ function onInput(e) {
     case 'algName': { const a = house.allergies.find((x) => x.id === t.dataset.id); if (a) { a.name = t.value; persist.allergies(house); } break; }
     case 'algCount': { const a = house.allergies.find((x) => x.id === t.dataset.id); if (a) { a.count = clampInt(t.value); persist.allergies(house); } break; }
     case 'stkName': { const s = house.stock.find((x) => x.id === t.dataset.id); if (s) { s.name = t.value; persist.stock(house); } break; }
-    case 'stkQty': { const s = house.stock.find((x) => x.id === t.dataset.id); if (s) { s.qty = clampNum(t.value); persist.stock(house); } break; }
-    case 'monthlyBudget': house.monthlyBudget = clampNum(t.value); persist.house(house); break;
+    case 'stkQty': { const s = house.stock.find((x) => x.id === t.dataset.id); if (s) { s.qty = clampNum(t.value); toggleBelowMin(t, s); persist.stock(house); } break; }
+    case 'stkMin': { const s = house.stock.find((x) => x.id === t.dataset.id); if (s) { s.minQty = clampNum(t.value); toggleBelowMin(t, s); persist.stock(house); } break; }
+    case 'countQty': state.countValues[t.dataset.id] = clampNum(t.value); break;
+    case 'budgetAmount': {
+      const b = budgetForMonth(house, state.currentMonth);
+      b.budget = KD.parseMoney(t.value);
+      reformatMoney(t);
+      updateBudgetTiles(house); persist.budget(house, state.currentMonth); break;
+    }
+    case 'overrunAmount': {
+      const b = budgetForMonth(house, state.currentMonth);
+      b.overrun = KD.parseMoney(t.value);
+      reformatMoney(t);
+      updateBudgetTiles(house); persist.budget(house, state.currentMonth); break;
+    }
+    case 'overrunNote': {
+      const b = budgetForMonth(house, state.currentMonth);
+      b.overrunNote = t.value; persist.budget(house, state.currentMonth); break;
+    }
     default: break;
   }
+}
+
+/* Toggle the below-minimum red row highlight live (no full re-render). */
+function toggleBelowMin(input, item) {
+  const row = input.closest('tr');
+  if (row) row.classList.toggle('below-min', KD.isBelowMin(item));
+}
+
+/* Reformat a money input with thousands separators while typing, keeping the
+   caret at the end (budget fields are short, so caret-to-end is acceptable). */
+function reformatMoney(input) {
+  input.value = formatMoneyTyping(input.value);
+  const end = input.value.length;
+  try { input.setSelectionRange(end, end); } catch { /* number inputs disallow it */ }
 }
 
 /* Live update of the "סה"כ בסיס" figure without a full re-render (which would
@@ -762,10 +960,12 @@ function onChange(e) {
   const house = activeHouse();
   if (!house) return;
 
-  if (act === 'ingCat') {
+  if (act === 'ingName') {
+    // Finalised on blur / datalist pick: register the (possibly new) name in the
+    // shared catalog so it appears in every dropdown next render.
     const dish = findDish(house, t.dataset.day, t.dataset.meal, t.dataset.dish);
     const ing = dish && dish.ingredients.find((i) => i.id === t.dataset.ing);
-    if (ing) { ing.category = KD.isCategory(t.value) ? t.value : 'groceries'; persist.menu(house, state.currentWeekOf); }
+    if (ing && ing.name.trim()) catalogAdd([{ name: ing.name, unit: ing.unit, category: ing.category }]);
   } else if (act === 'ingUnit') {
     const dish = findDish(house, t.dataset.day, t.dataset.meal, t.dataset.dish);
     const ing = dish && dish.ingredients.find((i) => i.id === t.dataset.ing);
@@ -774,11 +974,16 @@ function onChange(e) {
       ing.unit = KD.safeUnit(t.value);
       persist.menu(house, state.currentWeekOf); render();
     }
+  } else if (act === 'stkName') {
+    const s = house.stock.find((x) => x.id === t.dataset.id);
+    if (s && s.name.trim()) catalogAdd([{ name: s.name, unit: s.unit, category: s.category }]);
   } else if (act === 'stkCat') {
     const s = house.stock.find((x) => x.id === t.dataset.id); if (s) { s.category = KD.isCategory(t.value) ? t.value : 'groceries'; persist.stock(house); render(); }
   } else if (act === 'stkUnit') {
     const s = house.stock.find((x) => x.id === t.dataset.id);
-    if (s) { s.qty = reunit(s.qty, s.unit, t.value); s.unit = KD.safeUnit(t.value); persist.stock(house); render(); }
+    if (s) { s.qty = reunit(s.qty, s.unit, t.value); s.minQty = reunit(s.minQty, s.unit, t.value); s.unit = KD.safeUnit(t.value); persist.stock(house); render(); }
+  } else if (act === 'countDate') {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t.value)) state.countDate = t.value;
   } else if (act === 'pickDish') {
     addExistingDish(house, t.dataset.day, t.dataset.meal, t.value);
     t.value = '';
@@ -840,8 +1045,13 @@ async function onClick(e) {
     case 'algDel': house.allergies = house.allergies.filter((a) => a.id !== d.id); persist.allergies(house); render(); break;
 
     case 'stockCat': state.stockCat = d.cat; render(); break;
-    case 'stkAdd': house.stock.push({ id: KD.newId('stk'), name: '', category: KD.isCategory(d.cat) ? d.cat : 'groceries', qty: 0, unit: 'kg' }); persist.stock(house); render(); break;
+    case 'stkAdd': house.stock.push({ id: KD.newId('stk'), name: '', category: KD.isCategory(d.cat) ? d.cat : 'groceries', qty: 0, unit: 'kg', minQty: 0 }); persist.stock(house); render(); break;
     case 'stkDel': house.stock = house.stock.filter((s) => s.id !== d.id); persist.stock(house); render(); break;
+
+    case 'countStart': state.countMode = true; state.countDate = KD.toISODate(new Date()); state.countValues = {}; render(); break;
+    case 'countCancel': state.countMode = false; state.countValues = {}; render(); break;
+    case 'countSave': saveStockCount(house); break;
+    case 'countRestore': restoreStockCount(house, d.date); break;
 
     case 'purAdd': {
       const amount = clampNum($('#spendAmount').value);
@@ -890,10 +1100,40 @@ function serveDay(house, day) {
   else setStatus('המנות נוכו מהמלאי ✓');
 }
 
+/* Save a stock count: apply the one-pass edits to current stock, then store a
+   dated snapshot (upsert by date). Both persist; shopping/plan recompute on the
+   next render from the new numbers. */
+function saveStockCount(house) {
+  const date = state.countDate || KD.toISODate(new Date());
+  house.stock.forEach((s) => {
+    if (state.countValues[s.id] != null) s.qty = state.countValues[s.id];
+  });
+  const count = KD.makeStockCount(date, house.stock);
+  count.id = KD.newId('cnt');
+  house.stockCounts = (house.stockCounts || []).filter((c) => c.date !== date).concat(count);
+  persist.stock(house);
+  persist.stockCount(house, count);
+  state.countMode = false;
+  state.countValues = {};
+  render();
+  setStatus('הספירה נשמרה ✓');
+}
+
+/* Restore the pantry to a previously saved dated snapshot. */
+function restoreStockCount(house, date) {
+  const c = (house.stockCounts || []).find((x) => x.date === date);
+  if (!c) return;
+  if (!window.confirm('לשחזר את המלאי לספירה מתאריך ' + KD.formatDateHe(date) + '?\nהמלאי הנוכחי יוחלף.')) return;
+  house.stock = KD.stockFromCount(c).map(normStock);
+  persist.stock(house);
+  render();
+  setStatus('המלאי שוחזר לספירה מ־' + KD.formatDateHe(date) + ' ✓');
+}
+
 async function addHouse() {
   const name = window.prompt('שם הבית החדש:');
   if (!name || !name.trim()) return;
-  const house = { id: KD.newId('house'), name: name.trim(), headcount: KD.emptyHeadcount(), allergies: [], stock: [], purchases: [], consumption: [], weeks: {}, monthlyBudget: 0 };
+  const house = { id: KD.newId('house'), name: name.trim(), headcount: KD.emptyHeadcount(), allergies: [], stock: [], purchases: [], consumption: [], stockCounts: [], budgets: {}, weeks: {}, monthlyBudget: 0 };
   state.houses.push(house);
   state.activeHouseId = house.id;
   render();
