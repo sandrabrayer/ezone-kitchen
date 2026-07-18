@@ -364,10 +364,28 @@ tr.below-min td { background: color-mix(in srgb, var(--danger) 9%, transparent);
 tr.below-min td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
 input.over { color: var(--danger); font-weight: 800; }
 
-/* stock: "add item" combobox row (category-scoped catalog dropdown + button) */
+/* stock items as mobile-friendly cards: full-width name combobox on top, then
+   qty · unit · minimum · delete. Replaces the cramped 5-column table. */
+.stk-list { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.3rem; }
+.stk-item { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.6rem; background: var(--surface-2); border-inline-start: 4px solid transparent; }
+.stk-item.below-min { border-inline-start-color: var(--danger); background: color-mix(in srgb, var(--danger) 7%, var(--surface-2)); }
+.stk-name { width: 100%; font-weight: 700; margin-bottom: 0.45rem; }
+.stk-controls { display: flex; align-items: flex-end; gap: 0.6rem; flex-wrap: wrap; }
+.stk-f { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.72rem; color: var(--muted); font-weight: 600; }
+.stk-f .u input { width: 68px; }
+.stk-min { width: 68px; text-align: center; }
+.stk-min.over { color: var(--danger); font-weight: 800; }
+.stk-controls .icon-btn { margin-inline-start: auto; }
+
+/* stock: "add new (non-catalog) item" row */
 .stock-add { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.7rem; flex-wrap: wrap; }
 .stock-add input { flex: 1; min-width: 180px; }
 .stock-add .add-row { width: auto; min-height: 44px; padding: 0.4rem 1rem; }
+
+/* shopping list: manual "extras" rows */
+.extras-list .extra-item { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0; border-top: 1px solid var(--border); }
+.extras-list .extra-name { flex: 1; min-width: 0; }
+.extras-list .extra-item .u input { width: 64px; }
 
 /* stock-count mode + history */
 .count-cat { display: flex; align-items: center; gap: 0.5rem; margin: 0.9rem 0 0.2rem; font-size: 1rem; }
