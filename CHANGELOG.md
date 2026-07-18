@@ -7,6 +7,89 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+> **Apps Script redeploy required.** This release adds columns/tabs to the Sheet
+> backend (`stock.min`, and the new `catalog`, `stockCounts`, `monthlyBudgets`
+> tabs). After pulling, **publish a NEW VERSION of the EXISTING Apps Script
+> deployment** (pencil icon — never a new deployment, or the `/exec` URL
+> changes). New tabs/columns are created automatically on first write.
+
+### Fixed — menu ingredient row cleanup (removed the orphan "מכו…" category box)
+
+- **`public/app.js`**: the menu ingredient row is now **name | qty | unit |
+  delete** only. The truncated per-row category `<select>` (`.ing-cat`, which
+  showed "מכו…") is gone; an ingredient's category is now derived from the shared
+  **catalog** by name (default `groceries`). Removed the `ingCat` handler.
+- **`public/styles.css`**: dropped the dead `.ing-cat` rule; the name field moved
+  into the `.ing-meta` grid. A static test (`test/frontend-shape.test.js`) guards
+  against the orphan box (and the `לסועד` label) ever returning.
+
+### Added — shared item catalog with dropdowns everywhere
+
+- **`lib/kitchen-domain.js`**: `mergeCatalog` (dedup by normalised name,
+  first-seen wins, unit/category whitelisted) and `catalogLookup`.
+- **`public/app.js`**: a global `catalogNames` datalist backs **every** item /
+  ingredient name field (menu + pantry) as a searchable combobox that still
+  accepts free text; new names are auto-added on blur and persisted. The catalog
+  is seeded/self-healed on load from existing stock items + menu ingredients.
+- **`apps-script/Code.gs`**: new **global** `catalog` tab (`name | unit |
+  category`) + `saveCatalog` (whole-tab replace); returned by `load`.
+- **Tests**: `test/catalog.test.js` (dedup, lookup, whitelist, idempotence).
+
+### Added — stock count mode (ספירת מלאי) with dated snapshots
+
+- **`lib/kitchen-domain.js`**: `makeStockCount(date, stock)` and
+  `stockFromCount(count)` (pure snapshot / restore round-trip).
+- **`public/app.js`**: a **"ספירת מלאי"** button opens a one-pass count over all
+  categories with a **date picker** (default today); **"שמור ספירה"** overwrites
+  current stock **and** stores a dated snapshot. The מלאי header shows **"ספירה
+  אחרונה: <date>"**, and a history list can **restore** any past count. Shopping
+  list & צפי recompute immediately from the new numbers.
+- **`apps-script/Code.gs`**: new `stockCounts` tab (`id | houseId | date |
+  itemsJson`), upserted by (house, date); `saveStockCount`; returned by `load`.
+- **Tests**: `test/stock-count.test.js` (snapshot capture, restore round-trip,
+  legacy normalisation, shopping-math equivalence after restore).
+
+### Added — minimum stock (par levels)
+
+- **`lib/kitchen-domain.js`**: `readStockItem` carries a `min` (par) level;
+  `isBelowMin`; `buildShoppingList` now buys the **max** of the menu shortfall
+  and the top-up to minimum (never the sum), over the **union** of menu items and
+  pantry items that have a minimum — so par-only items still surface. Stock/min
+  match by name + unit family (kg↔g, l↔ml).
+- **`public/app.js`**: a **"מלאי מינימום"** field per pantry item; rows **below
+  minimum are highlighted red** (live). The צפי table gains a **מינימום** column
+  and its "חסר" reflects the top-up.
+- **`apps-script/Code.gs`**: `stock` tab gains a trailing `min` column.
+- **Tests**: `test/min-stock.test.js` (below-min flag, max-of-shortfall-and-topup,
+  par-only surfacing, cross-unit top-up).
+
+### Fixed / Changed — monthly budget per month + approved overrun (חריגה מאושרת)
+
+- **Fixed** the desync where the input read `20,000` but the tile still showed
+  `₪10,000`: editing now **updates the tiles live** (no re-render, keeps focus)
+  and persists. Amounts are typed with **thousands separators** (`20,000`) and
+  stored numeric.
+- **Changed** budget storage to **per month** — each month keeps its own budget;
+  a legacy single budget migrates into the current month on load.
+- **Added** an **approved-overrun** amount + note near the budget, a **"חריגה
+  מאושרת"** tile, and **מול תקציב = (תקציב + חריגה מאושרת) − בפועל**.
+- **`lib/kitchen-domain.js`**: `summariseBudget(budget, actual, overrun)` (overrun
+  raises the ceiling; default 0 keeps the 2-arg call working); `parseMoney` /
+  `groupThousands`.
+- **`apps-script/Code.gs`**: new `monthlyBudgets` tab (`houseId | month | budget |
+  overrun | overrunNote`) + `saveBudget`; returned by `load` as `budgets`.
+- **Tests**: `test/money-budget.test.js` (parse/format round-trip, overrun math,
+  back-compat, invalid clamping).
+
+### Security
+
+New inputs are validated at both ends: money is parsed to a non-negative finite
+number (`parseMoney`); stock `min`, count quantities, and budget/overrun coerce to
+≥0; units and categories are whitelisted in the client (`safeUnit`, `isCategory`)
+and in Apps Script (`unit_`, `category_`); catalog/snapshot writes drop blank
+names and store item lists as JSON (no formula/HTML injection — all rendered text
+stays `esc()`-escaped). Stock-count restore is confirmed before replacing stock.
+
 ### Changed — menu quantities are dish TOTALS, not per diner (drop ×people)
 
 Ingredient quantities now mean the **total for the dish**, so headcount no longer

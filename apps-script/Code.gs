@@ -7,36 +7,46 @@
  * rejected (fail-closed).
  *
  * One tab per entity — created automatically on first use:
- *   houses      id | name
- *   budget      houseId | monthlyBudget
- *   headcount   houseId | basePatients | baseStaff | overridesJson
- *   allergies   id | houseId | name | count
- *   stock       id | houseId | name | category | qty | unit
- *   menus       houseId | weekOf | daysJson
- *   purchases   id | houseId | weekOf | amount | note | date
- *   consumption id | houseId | weekOf | day | executedAt   (served-day markers)
+ *   houses         id | name
+ *   budget         houseId | monthlyBudget                 (legacy single budget)
+ *   monthlyBudgets houseId | month | budget | overrun | overrunNote   (per month)
+ *   headcount      houseId | basePatients | baseStaff | overridesJson
+ *   allergies      id | houseId | name | count
+ *   stock          id | houseId | name | category | qty | unit | min
+ *   catalog        name | unit | category                  (GLOBAL, no houseId)
+ *   stockCounts    id | houseId | date | itemsJson          (dated snapshots)
+ *   menus          houseId | weekOf | daysJson
+ *   purchases      id | houseId | weekOf | amount | note | date
+ *   consumption    id | houseId | weekOf | day | executedAt (served-day markers)
  *
  * Columns are mapped by POSITION (see readRows_), so the header text in an
  * existing Sheet is cosmetic: the `qty` column is what used to be `qtyKg`
  * (legacy kilogram rows read back as qty + an empty unit → treated as kg), and
- * `budget.monthlyBudget` is the old `weeklyBudget` column reused. Pricing was
- * removed — the old `ingredientPrices` tab is simply no longer read or written.
+ * `budget.monthlyBudget` is the old `weeklyBudget` column reused. The `stock`
+ * tab gained a trailing `min` column (par level); rows without it read min=0.
+ * Pricing was removed — the old `ingredientPrices` tab is no longer read/written.
  *
- * Deploy: see docs/APPS-SCRIPT-SETUP.md. Redeploy by publishing a NEW VERSION
- * of the EXISTING deployment (pencil icon) — never create a new deployment,
- * or the /exec URL changes and the server breaks.
+ * NEW COLUMNS / TABS require a REDEPLOY: publish a NEW VERSION of the EXISTING
+ * deployment (pencil icon) — never create a new deployment, or the /exec URL
+ * changes and the server breaks. See docs/APPS-SCRIPT-SETUP.md.
  */
 
 var SHEETS = {
   houses: ['id', 'name'],
   budget: ['houseId', 'monthlyBudget'],
+  monthlyBudgets: ['houseId', 'month', 'budget', 'overrun', 'overrunNote'],
   headcount: ['houseId', 'basePatients', 'baseStaff', 'overridesJson'],
   allergies: ['id', 'houseId', 'name', 'count'],
-  stock: ['id', 'houseId', 'name', 'category', 'qty', 'unit'],
+  stock: ['id', 'houseId', 'name', 'category', 'qty', 'unit', 'min'],
+  catalog: ['name', 'unit', 'category'],
+  stockCounts: ['id', 'houseId', 'date', 'itemsJson'],
   menus: ['houseId', 'weekOf', 'daysJson'],
   purchases: ['id', 'houseId', 'weekOf', 'amount', 'note', 'date'],
   consumption: ['id', 'houseId', 'weekOf', 'day', 'executedAt']
 };
+
+var CATEGORIES = ['groceries', 'vegetables', 'fruits', 'meat', 'dry'];
+function category_(v) { return CATEGORIES.indexOf(v) !== -1 ? v : 'groceries'; }
 
 // The closed set of units the app understands; anything else is stored as kg
 // (the legacy default) so a bad value can never poison the math.
@@ -66,8 +76,12 @@ function doPost(e) {
         })); break;
         case 'saveStock': result = replaceForHouse_('stock', body.houseId, (body.stock || []).map(function (s) {
           var qty = s.qty != null ? s.qty : s.qtyKg; // back-compat with pre-unit clients
-          return [s.id || uid_('stk'), body.houseId, s.name || '', s.category || 'groceries', num_(qty), unit_(s.unit)];
+          var min = s.minQty != null ? s.minQty : s.min;
+          return [s.id || uid_('stk'), body.houseId, s.name || '', category_(s.category), num_(qty), unit_(s.unit), num_(min)];
         })); break;
+        case 'saveCatalog': result = saveCatalog_(body.catalog); break;
+        case 'saveStockCount': result = saveStockCount_(body.houseId, body.count); break;
+        case 'saveBudget': result = saveBudget_(body.houseId, body.month, body.budget); break;
         case 'savePurchases': result = replaceForHouse_('purchases', body.houseId, (body.purchases || []).map(function (p) {
           return [p.id || uid_('pur'), body.houseId, p.weekOf || '', num_(p.amount), p.note || '', p.date || ''];
         })); break;
@@ -145,6 +159,16 @@ function replaceForHouse_(name, houseId, newRows) {
   return { ok: true, count: newRows.length };
 }
 
+// Replace the entire body of a tab (used for global tabs with no houseId).
+function replaceAll_(name, newRows) {
+  var sh = sheet_(name);
+  var headers = SHEETS[name];
+  var last = sh.getLastRow();
+  if (last >= 2) sh.getRange(2, 1, last - 1, headers.length).clearContent();
+  if (newRows.length) sh.getRange(2, 1, newRows.length, headers.length).setValues(newRows);
+  return { ok: true, count: newRows.length };
+}
+
 // Upsert a single row identified by keyField=keyVal (+ optional second key).
 function upsertRow_(name, keyFields, keyVals, row) {
   var sh = sheet_(name);
@@ -190,6 +214,34 @@ function saveMenu_(houseId, weekOf, days) {
   return { ok: true };
 }
 
+// The shared item catalog is GLOBAL (no houseId), so it is replaced wholesale.
+function saveCatalog_(catalog) {
+  var rows = (catalog || []).map(function (c) {
+    return [String(c.name || '').trim(), unit_(c.unit), category_(c.category)];
+  }).filter(function (r) { return r[0] !== ''; });
+  replaceAll_('catalog', rows);
+  return { ok: true, count: rows.length };
+}
+
+// A dated pantry snapshot. Upsert by (houseId, date) so recounting the same day
+// overwrites rather than piling up. The full stock list is stored as JSON.
+function saveStockCount_(houseId, count) {
+  if (!houseId || !count || !count.date) return { ok: false, error: 'houseId & count.date required' };
+  var id = count.id || uid_('cnt');
+  upsertRow_('stockCounts', ['houseId', 'date'], [houseId, count.date],
+    [id, houseId, String(count.date), JSON.stringify(count.items || [])]);
+  return { ok: true };
+}
+
+// Per-month budget + approved overrun. Upsert by (houseId, month).
+function saveBudget_(houseId, month, budget) {
+  if (!houseId || !month) return { ok: false, error: 'houseId & month required' };
+  budget = budget || {};
+  upsertRow_('monthlyBudgets', ['houseId', 'month'], [houseId, month],
+    [houseId, String(month), num_(budget.budget), num_(budget.overrun), String(budget.overrunNote || '')]);
+  return { ok: true };
+}
+
 // The five real houses, with fixed human-readable ids and Hebrew display names.
 // Mirrors KitchenDomain.SEED_HOUSES (lib/kitchen-domain.js); a Node test asserts
 // the two lists never drift.
@@ -220,7 +272,12 @@ function loadAll_() {
   var stock = groupBy_(readRows_('stock'), 'houseId');
   var purchases = groupBy_(readRows_('purchases'), 'houseId');
   var consumption = groupBy_(readRows_('consumption'), 'houseId');
+  var stockCounts = groupBy_(readRows_('stockCounts'), 'houseId');
+  var monthlyBudgets = groupBy_(readRows_('monthlyBudgets'), 'houseId');
   var menus = groupBy_(readRows_('menus'), 'houseId');
+  var catalog = readRows_('catalog').map(function (c) {
+    return { name: String(c.name || ''), unit: unit_(c.unit), category: category_(c.category) };
+  }).filter(function (c) { return c.name !== ''; });
 
   var out = houses.map(function (h) {
     var id = String(h.id);
@@ -230,21 +287,27 @@ function loadAll_() {
       var days = safeParse_(m.daysJson, {});
       weeks[String(m.weekOf)] = { weekOf: String(m.weekOf), days: days };
     });
+    var budgets = {};
+    (monthlyBudgets[id] || []).forEach(function (b) {
+      budgets[String(b.month)] = { budget: num_(b.budget), overrun: num_(b.overrun), overrunNote: String(b.overrunNote || '') };
+    });
     return {
       id: id,
       name: h.name || '',
       monthlyBudget: budget[id] ? num_(budget[id].monthlyBudget) : 0,
+      budgets: budgets,
       headcount: hc
         ? { basePatients: num_(hc.basePatients), baseStaff: num_(hc.baseStaff), overrides: safeParse_(hc.overridesJson, {}) }
         : { basePatients: 0, baseStaff: 0, overrides: {} },
       allergies: (allergies[id] || []).map(function (a) { return { id: String(a.id), name: a.name, count: num_(a.count) }; }),
-      stock: (stock[id] || []).map(function (s) { return { id: String(s.id), name: s.name, category: s.category, qty: num_(s.qty), unit: unit_(s.unit) }; }),
+      stock: (stock[id] || []).map(function (s) { return { id: String(s.id), name: s.name, category: category_(s.category), qty: num_(s.qty), unit: unit_(s.unit), minQty: num_(s.min) }; }),
       purchases: (purchases[id] || []).map(function (p) { return { id: String(p.id), weekOf: String(p.weekOf), amount: num_(p.amount), note: p.note || '', date: String(p.date || '') }; }),
       consumption: (consumption[id] || []).map(function (c) { return { id: String(c.id), weekOf: String(c.weekOf), day: String(c.day), executedAt: String(c.executedAt || '') }; }),
+      stockCounts: (stockCounts[id] || []).map(function (c) { return { id: String(c.id), date: String(c.date), items: safeParse_(c.itemsJson, []) }; }),
       weeks: weeks
     };
   });
-  return { ok: true, houses: out };
+  return { ok: true, houses: out, catalog: catalog };
 }
 
 /* --------------------------- small utils --------------------------- */
