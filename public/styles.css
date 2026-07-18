@@ -344,12 +344,11 @@ input::placeholder { color: #9aa8a1; }
 .ing { padding: 0.4rem 0; border-top: 1px dashed var(--border); }
 .ing:first-of-type { border-top: none; }
 .ing-name { margin-bottom: 0.35rem; }
-.ing-meta { display: grid; grid-template-columns: 1fr auto auto auto; gap: 0.35rem; align-items: center; }
+.ing-meta { display: grid; grid-template-columns: 1fr auto auto; gap: 0.35rem; align-items: center; }
 .ing-cat { min-width: 0; }
 .ing .u { display: flex; gap: 0.25rem; }
 .ing .u input { width: 64px; text-align: center; padding-left: 0.35rem; padding-right: 0.35rem; }
 .ing .u select { width: 58px; padding-left: 0.35rem; padding-right: 0.35rem; }
-.per-person { color: var(--muted); font-size: 0.7rem; white-space: nowrap; }
 
 /* ---------------- tables ---------------- */
 table { width: 100%; border-collapse: collapse; }
@@ -358,6 +357,9 @@ th { font-size: 0.82rem; color: var(--muted); font-weight: 700; }
 td .danger { min-height: 40px; }
 .over { color: var(--danger); font-weight: 800; }
 .under { color: var(--brand); font-weight: 800; }
+/* weekly-plan: highlight rows with a shortfall to buy */
+tr.plan-short td { background: color-mix(in srgb, var(--danger) 9%, transparent); }
+tr.plan-short td:first-child { font-weight: 700; box-shadow: inset 3px 0 0 var(--danger); }
 
 /* stock category tabs (in-card, horizontally scrollable) */
 .subtabs { display: flex; gap: 0.4rem; overflow-x: auto; padding-bottom: 0.4rem; margin-bottom: 0.8rem; scrollbar-width: none; }

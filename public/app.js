@@ -86,6 +86,7 @@ const state = {
   tab: 'menu',
   mealOpen: {}, // transient accordion state, keyed by `${day}:${meal}`
   checked: {},  // transient shopping-list check-off state (ingredient key -> true)
+  planFromToday: false, // weekly-plan filter: whole week vs from today onward
 };
 
 function activeHouse() {
@@ -99,17 +100,19 @@ function ensureWeek(house, weekOf) {
 
 /* ============================ normalisation ============================ */
 /* Coerce data from the Sheet (and older records) into the current shapes:
-   ingredients & stock carry { qty/qtyPerPerson, unit }; older rows stored
-   kilograms in { qtyKgPerPerson } / { qtyKg }. Every unit is whitelisted. */
+   ingredients & stock carry { qty, unit }. `qty` is the dish TOTAL (older rows
+   stored per-person kilograms in qtyPerPerson / qtyKgPerPerson — now read as
+   totals). Every unit is whitelisted. */
 function normIngredient(ing) {
   ing = ing || {};
-  const raw = ing.qtyPerPerson != null ? ing.qtyPerPerson : ing.qtyKgPerPerson;
+  const raw = ing.qty != null ? ing.qty
+    : (ing.qtyPerPerson != null ? ing.qtyPerPerson : ing.qtyKgPerPerson);
   const value = Number(raw);
   return {
     id: ing.id || KD.newId('ing'),
     name: String(ing.name || ''),
     category: KD.isCategory(ing.category) ? ing.category : 'groceries',
-    qtyPerPerson: Number.isFinite(value) && value > 0 ? value : 0,
+    qty: Number.isFinite(value) && value > 0 ? value : 0,
     unit: KD.safeUnit(ing.unit),
   };
 }
@@ -141,7 +144,7 @@ async function loadState() {
     if (typeof h.monthlyBudget !== 'number') {
       h.monthlyBudget = typeof h.weeklyBudget === 'number' ? h.weeklyBudget : 0;
     }
-    // Normalise every stored ingredient to { qtyPerPerson, unit }.
+    // Normalise every stored ingredient to { qty, unit }.
     for (const weekOf of Object.keys(h.weeks)) {
       const wk = h.weeks[weekOf];
       if (!wk || !wk.days) continue;
@@ -211,9 +214,10 @@ function applyHouseTheme() {
 
 /* ============================ rendering ============================ */
 const TABS = [
-  { id: 'menu', icon: '🗓️', label: 'תפריט' },
   { id: 'headcount', icon: '👥', label: 'תפוסה' },
+  { id: 'menu', icon: '🗓️', label: 'תפריט' },
   { id: 'stock', icon: '📦', label: 'מלאי' },
+  { id: 'plan', icon: '📊', label: 'צפי' },
   { id: 'shopping', icon: '🛒', label: 'קניות' },
   { id: 'budget', icon: '💰', label: 'תקציב' },
   { id: 'admin', icon: '🏠', label: 'כל הבתים' },
@@ -245,7 +249,7 @@ function render() {
       'הוסיפו בית עם הכפתור ＋ שליד מתגי הבתים כדי להתחיל.');
     return;
   }
-  const map = { menu: renderMenu, headcount: renderHeadcount, stock: renderStock, shopping: renderShopping, budget: renderBudget };
+  const map = { menu: renderMenu, headcount: renderHeadcount, stock: renderStock, plan: renderPlan, shopping: renderShopping, budget: renderBudget };
   const fn = map[state.tab] || renderMenu;
   screen.innerHTML = fn(house);
 }
@@ -329,7 +333,7 @@ function renderMenu(house) {
     const people = KD.effectiveForDay(house.headcount, day).total;
     const isToday = thisWeek && day === today;
     const served = KD.isDayExecuted(house.consumption, weekOf, day);
-    const canServe = KD.dayConsumption(week, house.headcount, day).length > 0;
+    const canServe = KD.dayConsumption(week, day).length > 0;
 
     const meals = KD.MEALS.map((meal) => {
       const dishes = week.days[day][meal] || [];
@@ -404,10 +408,9 @@ function renderDish(day, meal, dish) {
       <div class="ing-meta">
         <select class="ing-cat" data-act="ingCat" ${d}>${catOpts}</select>
         <span class="u">
-          <input type="number" inputmode="decimal" min="0" step="${qtyStep(unit)}" value="${ing.qtyPerPerson || ''}" placeholder="0" data-act="ingQty" ${d} />
+          <input type="number" inputmode="decimal" min="0" step="${qtyStep(unit)}" value="${ing.qty || ''}" placeholder="0" data-act="ingQty" ${d} />
           <select data-act="ingUnit" ${d}>${unitOptions(unit)}</select>
         </span>
-        <span class="per-person">לסועד</span>
         <button class="icon-btn danger" title="מחק מרכיב" data-act="delIng" ${d}>✕</button>
       </div>
     </div>`;
@@ -500,11 +503,60 @@ function renderStock(house) {
   </div>`;
 }
 
+/* ------------------------ Weekly plan view ------------------------ */
+/* Short-term planning at a glance: every ingredient needed across the week (or
+   from today onward) vs current stock, with the shortfall to buy. Reuses
+   buildShoppingList (aggregation + name/unit-family stock matching) — the only
+   difference from the shopping list is that it shows the RAW weekly need
+   (no purchasing buffer) and its "חסר" = max(0, needed − stock). */
+function renderPlan(house) {
+  const weekOf = state.currentWeekOf;
+  const week = (house.weeks && house.weeks[weekOf]) || KD.emptyWeekMenu(weekOf);
+  const isThisWeek = weekOf === KD.weekStart(new Date());
+  const todayIdx = new Date().getDay(); // 0 = Sunday … 6 = Saturday
+  const daysRemaining = 7 - todayIdx;   // days left in the week, including today
+  const fromToday = state.planFromToday;
+  const days = fromToday ? KD.DAYS.slice(todayIdx) : KD.DAYS;
+  const list = KD.buildShoppingList(week, house.stock, undefined, days);
+
+  const rows = list.lines.map((line) => {
+    const missing = KD.subtractStock(line.requiredQty, line.stockQty);
+    const short = missing > 0;
+    return `<tr class="${short ? 'plan-short' : ''}">
+      <td>${esc(line.name)}</td>
+      <td class="num">${fmtQty(line.requiredQty, line.unit)}</td>
+      <td class="num muted">${fmtQty(line.stockQty, line.unit)}</td>
+      <td class="num ${short ? 'over' : 'under'}">${short ? fmtQty(missing, line.unit) : '—'}</td>
+    </tr>`;
+  }).join('');
+  const shortCount = list.lines.filter((l) => KD.subtractStock(l.requiredQty, l.stockQty) > 0).length;
+  const needLabel = fromToday ? 'נדרש (מהיום)' : 'נדרש לשבוע';
+
+  return `${allergyBanner(house)}
+    <div class="card">
+      <div class="row between">
+        <h2 style="margin:0">צפי שבועי — ${esc(house.name)}</h2>
+        ${isThisWeek ? `<span class="pill">נותרו ${daysRemaining} ימים</span>` : ''}
+      </div>
+      <p class="muted">שבוע ${esc(KD.formatDateHe(weekOf))} · מה נדרש מול המלאי הקיים.</p>
+      <div class="subtabs">
+        <button data-act="planScope" data-scope="week" aria-current="${!fromToday}">כל השבוע</button>
+        <button data-act="planScope" data-scope="today" aria-current="${fromToday}">מהיום והלאה</button>
+      </div>
+      ${list.lines.length ? `<table>
+        <thead><tr><th>פריט</th><th>${needLabel}</th><th>במלאי</th><th>חסר (לקנייה)</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <p class="muted" style="margin-top:.6rem">${shortCount ? `⚠️ ${shortCount} פריטים חסרים במלאי` : '✓ המלאי מכסה את כל הצרכים'}</p>`
+      : emptyState('📊', 'אין מה לתכנן', 'הוסיפו מנות לתפריט השבוע כדי לראות צפי.')}
+    </div>`;
+}
+
 /* ------------------------ Shopping list view ------------------------ */
 function renderShopping(house) {
   const weekOf = state.currentWeekOf;
   const week = (house.weeks && house.weeks[weekOf]) || KD.emptyWeekMenu(weekOf);
-  const list = KD.buildShoppingList(week, house.headcount, house.stock);
+  const list = KD.buildShoppingList(week, house.stock);
   const pct = Math.round(list.bufferRate * 100);
 
   const sections = KD.CATEGORIES.map((c) => {
@@ -555,7 +607,7 @@ function renderShopping(house) {
 function shoppingListText(house) {
   const weekOf = state.currentWeekOf;
   const week = (house.weeks && house.weeks[weekOf]) || KD.emptyWeekMenu(weekOf);
-  const list = KD.buildShoppingList(week, house.headcount, house.stock);
+  const list = KD.buildShoppingList(week, house.stock);
   const lines = [];
   lines.push('🛒 רשימת קניות – ' + house.name);
   lines.push('שבוע ' + KD.formatDateHe(weekOf));
@@ -680,7 +732,7 @@ function onInput(e) {
       const ing = dish && dish.ingredients.find((i) => i.id === t.dataset.ing);
       if (!ing) break;
       if (act === 'ingName') ing.name = t.value;
-      else ing.qtyPerPerson = clampNum(t.value);
+      else ing.qty = clampNum(t.value);
       persist.menu(house, state.currentWeekOf);
       break;
     }
@@ -718,7 +770,7 @@ function onChange(e) {
     const dish = findDish(house, t.dataset.day, t.dataset.meal, t.dataset.dish);
     const ing = dish && dish.ingredients.find((i) => i.id === t.dataset.ing);
     if (ing) {
-      ing.qtyPerPerson = reunit(ing.qtyPerPerson, ing.unit, t.value);
+      ing.qty = reunit(ing.qty, ing.unit, t.value);
       ing.unit = KD.safeUnit(t.value);
       persist.menu(house, state.currentWeekOf); render();
     }
@@ -769,6 +821,7 @@ async function onClick(e) {
     case 'weekNext': state.currentWeekOf = KD.shiftWeek(state.currentWeekOf, 1); render(); break;
     case 'monthPrev': state.currentMonth = KD.shiftMonth(state.currentMonth, -1); render(); break;
     case 'monthNext': state.currentMonth = KD.shiftMonth(state.currentMonth, 1); render(); break;
+    case 'planScope': state.planFromToday = d.scope === 'today'; render(); break;
     case 'toggleMeal': { const k = mealKey(d.day, d.meal); state.mealOpen[k] = !state.mealOpen[k]; render(); break; }
     case 'copyLast': {
       const prev = house.weeks[KD.shiftWeek(state.currentWeekOf, -1)];
@@ -777,7 +830,7 @@ async function onClick(e) {
     }
     case 'addDish': { const w = ensureWeek(house, state.currentWeekOf); w.days[d.day][d.meal].push({ id: KD.newId('dish'), name: '', ingredients: [] }); state.mealOpen[mealKey(d.day, d.meal)] = true; persist.menu(house, state.currentWeekOf); render(); break; }
     case 'delDish': { const w = ensureWeek(house, state.currentWeekOf); w.days[d.day][d.meal] = w.days[d.day][d.meal].filter((x) => x.id !== d.dish); persist.menu(house, state.currentWeekOf); render(); break; }
-    case 'addIng': { const dish = findDish(house, d.day, d.meal, d.dish); if (dish) { dish.ingredients.push({ id: KD.newId('ing'), name: '', category: 'groceries', qtyPerPerson: 0, unit: 'kg' }); persist.menu(house, state.currentWeekOf); render(); } break; }
+    case 'addIng': { const dish = findDish(house, d.day, d.meal, d.dish); if (dish) { dish.ingredients.push({ id: KD.newId('ing'), name: '', category: 'groceries', qty: 0, unit: 'kg' }); persist.menu(house, state.currentWeekOf); render(); } break; }
     case 'delIng': { const dish = findDish(house, d.day, d.meal, d.dish); if (dish) { dish.ingredients = dish.ingredients.filter((i) => i.id !== d.ing); persist.menu(house, state.currentWeekOf); render(); } break; }
 
     case 'serveDay': serveDay(house, d.day); break;
@@ -823,7 +876,7 @@ function serveDay(house, day) {
   const weekOf = state.currentWeekOf;
   if (KD.isDayExecuted(house.consumption, weekOf, day)) return; // already done
   const week = ensureWeek(house, weekOf);
-  const consumption = KD.dayConsumption(week, house.headcount, day);
+  const consumption = KD.dayConsumption(week, day);
   if (!consumption.length) return;
   if (!window.confirm('לנכות מהמלאי את המנות שהוגשו ביום ' + KD.DAY_LABELS_HE[day] + '?\nניתן לבצע פעם אחת בלבד ליום זה.')) return;
 

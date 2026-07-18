@@ -7,6 +7,48 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Changed — menu quantities are dish TOTALS, not per diner (drop ×people)
+
+Ingredient quantities now mean the **total for the dish**, so headcount no longer
+multiplies them anywhere.
+
+- **`lib/kitchen-domain.js`**: `accumulateDays` no longer reads headcount or
+  multiplies by `people(day)` — it sums ingredient totals (converted to the
+  family base unit). `aggregateWeek(week, days?)` and `dayConsumption(week, day)`
+  drop the headcount parameter; `buildShoppingList(week, stock, bufferRate?,
+  days?)` drops headcount and gains an optional `days` subset. The ingredient
+  field is now `qty` (total); legacy `qtyPerPerson` / `qtyKgPerPerson` are read as
+  totals. `cloneDish` emits `qty`.
+- **`public/app.js`**: removed the **"לסועד"** (per-diner) label from ingredient
+  rows; ingredient state/reads/writes use `qty`; all `buildShoppingList` /
+  `dayConsumption` calls drop the headcount argument. Headcount is still shown as
+  occupancy but never scales food.
+- **Tests**: `test/aggregate.test.js`, `test/shopping-list.test.js`,
+  `test/consumption.test.js` updated to totals with explicit **no-people-multiplier**
+  assertions.
+
+### Changed — tab order: תפוסה first, then תפריט
+
+- **`public/app.js`**: the tab bar now leads with **תפוסה** (occupancy), then
+  **תפריט**, then מלאי / צפי / קניות / תקציב / כל הבתים.
+
+### Added — "צפי שבועי" (weekly plan) view
+
+A short-term planning table: every ingredient needed across the week vs current
+stock, with the shortfall to buy.
+
+- **`public/app.js`**: new `plan` tab / `renderPlan` — columns **פריט | נדרש |
+  במלאי | חסר (לקנייה)**, aggregated by name + unit family (kg↔g, l↔ml). `חסר =
+  max(0, needed − stock)`; shortfall rows highlighted. A **whole-week / from-today**
+  filter (`planScope`) and a **"נותרו X ימים"** indicator. It **reuses**
+  `buildShoppingList` (passing a `days` subset) — no duplicated aggregation — and
+  shows the raw weekly need (no buffer).
+- **`public/styles.css`**: shortfall-row highlight; ingredient-row grid updated
+  after removing the per-diner label.
+- **Tests**: `test/weekly-plan.test.js` (aggregation, from-today filter,
+  shortfall clamp, cross-unit match, no-people-multiplier) plus `days`-subset
+  cases in `test/aggregate.test.js` / `test/shopping-list.test.js`.
+
 ### Fixed — "סה"כ בסיס" (base total) was stuck at 0
 
 The base-occupancy figure on the תפוסה screen never reflected the numbers typed
