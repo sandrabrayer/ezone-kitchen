@@ -306,14 +306,35 @@ input::placeholder { color: #9aa8a1; }
 .today-badge { background: var(--accent-gold); color: #3a2a00; font-size: 0.7rem; font-weight: 800; padding: 0.1rem 0.5rem; border-radius: 999px; box-shadow: 0 0 0 1px rgba(180, 83, 9, 0.25); }
 .day-col.today .people-pill { background: rgba(255,255,255,0.25); color: #fff; }
 
-/* emphasis=meal: meal stripe is the dominant accent on the day card */
-.meal-block { padding: 0.7rem 0.9rem; border-top: 1px solid var(--border); border-inline-start: 6px solid var(--border); }
+/* day-head actions (headcount pill + "בוצע" mark-served button) */
+.day-head-actions { display: inline-flex; align-items: center; gap: 0.4rem; }
+.serve-btn {
+  min-height: 34px; padding: 0.2rem 0.7rem; font-size: 0.8rem; font-weight: 800;
+  border-radius: 999px; background: var(--brand); color: #fff; border: none; cursor: pointer;
+}
+.serve-btn:hover { filter: brightness(1.05); }
+.served-badge { font-size: 0.75rem; font-weight: 800; color: var(--brand-strong); background: var(--brand-tint); border-radius: 999px; padding: 0.2rem 0.6rem; white-space: nowrap; }
+.day-col.today .served-badge { background: rgba(255,255,255,0.25); color: #fff; }
+
+/* emphasis=meal: meal stripe is the dominant accent — meals are collapsible
+   (accordion), showing a dish-name summary line when closed to stay compact. */
+.meal-block { border-top: 1px solid var(--border); border-inline-start: 6px solid var(--border); }
 .meal-block.meal-breakfast { border-inline-start-color: var(--meal-breakfast); }
 .meal-block.meal-lunch { border-inline-start-color: var(--meal-lunch); }
 .meal-block.meal-dinner { border-inline-start-color: var(--meal-dinner); }
-.meal-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.4rem; }
-.meal-label { font-size: 0.95rem; color: var(--text); font-weight: 800; }
-.meal-head .add-row { width: auto; min-height: 40px; padding: 0.3rem 0.8rem; font-size: 0.85rem; }
+.meal-head {
+  display: flex; align-items: center; gap: 0.45rem; width: 100%;
+  padding: 0.6rem 0.9rem; margin: 0; background: none; border: none; cursor: pointer;
+  text-align: start; font: inherit; min-height: 44px;
+}
+.meal-caret { color: var(--muted); font-size: 0.8rem; }
+.meal-label { font-size: 0.95rem; color: var(--text); font-weight: 800; white-space: nowrap; }
+.meal-count { font-size: 0.72rem; font-weight: 800; color: var(--brand-strong); background: var(--brand-tint); border-radius: 999px; padding: 0 0.4rem; min-width: 1.1rem; text-align: center; }
+.meal-summary { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.85rem; }
+.meal-body { padding: 0 0.9rem 0.7rem; }
+.meal-actions { display: flex; gap: 0.4rem; align-items: center; margin-bottom: 0.3rem; flex-wrap: wrap; }
+.meal-actions .add-row { width: auto; min-height: 40px; padding: 0.3rem 0.8rem; font-size: 0.85rem; }
+.dish-picker { min-height: 40px; max-width: 55%; font-size: 0.85rem; }
 .meal-empty { color: #b7c2bb; padding: 0.2rem 0; }
 
 .dish { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.6rem; margin: 0.5rem 0; background: var(--surface-2); }
@@ -345,10 +366,15 @@ td .danger { min-height: 40px; }
 .subtabs button[aria-current='true'] { background: var(--brand-tint); border-color: var(--brand); color: var(--brand-strong); font-weight: 800; }
 
 /* ---------------- budget ---------------- */
+.month-bar { display: flex; align-items: center; justify-content: center; gap: 0.8rem; margin: 0.6rem 0; font-size: 1.05rem; }
+.month-bar strong { min-width: 6rem; text-align: center; }
 .stat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.7rem; margin-top: 0.4rem; }
+.stat-grid-3 { grid-template-columns: repeat(3, 1fr); }
 .stat { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.8rem; }
 .stat .label { color: var(--muted); font-size: 0.85rem; font-weight: 600; }
-.stat .value { font-size: 1.5rem; font-weight: 900; letter-spacing: -0.02em; margin-top: 0.15rem; color: var(--accent-strong); }
+.stat .value { font-size: 1.5rem; font-weight: 900; letter-spacing: -0.02em; margin-top: 0.15rem; color: var(--accent-strong); overflow-wrap: anywhere; }
+.stat-grid-3 .stat { padding: 0.7rem 0.55rem; }
+.stat-grid-3 .value { font-size: 1.15rem; }
 .stat .value.over { color: var(--danger); }
 .stat .value.under { color: var(--brand-strong); }
 

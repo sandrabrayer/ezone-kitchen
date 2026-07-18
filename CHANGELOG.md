@@ -7,6 +7,99 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Fixed — "סה"כ בסיס" (base total) was stuck at 0
+
+The base-occupancy figure on the תפוסה screen never reflected the numbers typed
+into מטופלים/צוות — it only updated on a full re-render (e.g. a tab switch).
+
+- **`lib/kitchen-domain.js`**: new pure `baseTotal(hc)` = base patients + base
+  staff (clamped, floored, override-independent) — the single source of truth for
+  the figure. Exported.
+- **`public/app.js`**: the pill renders `baseTotal(hc)` and now updates **live** —
+  `updateBaseTotal()` writes the new total into `#baseTotal` on every keystroke
+  without a full re-render (so the input keeps focus).
+- **Tests**: `test/base-total.test.js` (sum, override-independence, invalid/negative
+  → 0, fractional flooring).
+
+### Added — unit dropdown (ק"ג / גרם / יחידות / ליטר / מ"ל) everywhere quantities appear
+
+Replaced the kg-only (kg/g toggle that always stored kg) with a real unit choice
+on **menu ingredient rows** and **pantry (מלאי) items**.
+
+- **`lib/kitchen-domain.js`**: a closed `UNITS` set with three families — mass
+  (`kg` base · `g`), volume (`l` base · `ml`), count (`unit`). New `UNIT_LABELS_HE`,
+  `isUnit`/`safeUnit`, `unitFamily`, `baseUnitOf`, `convertUnit` (within-family
+  only; refuses to cross families), `toBaseValue`. Legacy `toKg`/`gramsToKg` kept.
+- **Data shape**: ingredients are now `{ …, qtyPerPerson, unit }` and stock items
+  `{ …, qty, unit }`. Both readers fall back to the legacy `qtyKgPerPerson` /
+  `qtyKg` (kilograms) so existing records keep working.
+- **`public/app.js`**: `<select>` of the five units on every ingredient and stock
+  row; changing the unit converts the value within a family (kg↔g, l↔ml) and keeps
+  the number across families. `fmtQty(qty, unit)` renders the localized unit label.
+- **`apps-script/Code.gs`**: `stock` gains a `unit` column; `unit_()` whitelists
+  values (unknown → kg). Units flow through `saveStock`/`load`.
+- **Tests**: unit conversion + family rules in `test/units.test.js`; unit-aware
+  aggregation in `test/aggregate.test.js`.
+
+### Changed — compact, collapsible day view + dish dropdown
+
+Weekly-menu day cards were too long.
+
+- **`public/app.js`**: each meal (בוקר/צהריים/ערב) is a controlled **accordion** —
+  collapsed by default with a **dish-name summary line** and a dish count; open
+  state is transient UI state so edits don't collapse it. Dish names get a
+  **datalist of existing dishes**, and each meal has a **"מנה קיימת…" dropdown**
+  that adds a dish cloned from a matching existing one (`findDishTemplate` +
+  `KitchenDomain.cloneDish`). `existingDishNames()` gathers distinct names across
+  the house's weeks.
+- **`public/styles.css`**: accordion header/summary/body, dish picker, and the
+  day-head action row.
+
+### Changed — inventory-first logic: shopping list is a projection; deduction is an explicit, idempotent action
+
+Stock is **not** touched on menu save. The shopping list only forecasts the
+shortfall; the pantry is reduced only when a day is explicitly marked served.
+
+- **`lib/kitchen-domain.js`**: `buildShoppingList` matches stock by **name + unit
+  family** (`stockMatchKey`, converting kg↔g / l↔ml) and outputs the shortfall
+  (`toBuyQty = max(0, buffered − matching stock)`) — it never mutates stock. New
+  `dayConsumption(week, hc, day)` (actual need for one day, **no** 20% buffer) and
+  `applyConsumption(stock, lines)` (pure — deducts served amounts, floored at 0,
+  reports shortfalls). `isDayExecuted(markers, weekOf, day)` guards idempotency.
+  Output line fields renamed kg→generic: `requiredQty`/`bufferedQty`/`stockQty`/
+  `toBuyQty` + `unit`.
+- **`public/app.js`**: a **"בוצע"** button per day deducts that day's consumption
+  from stock, records a `consumption` marker, and disables (shows "✓ בוצע"). The
+  guard + persisted marker make it runnable **once per day** across reloads/devices.
+- **`apps-script/Code.gs`**: new `consumption` tab + `saveConsumption` action;
+  markers returned by `load`.
+- **Tests**: cross-unit deduction, shortfall clamping, and the once-only guard in
+  `test/consumption.test.js`; cross-unit shortfall in `test/shopping-list.test.js`.
+
+### Changed — budget is now MONTHLY, in ₪, with pricing removed
+
+- **`lib/kitchen-domain.js`**: removed `estimateCost`/`actualSpendForWeek` and the
+  price index. New `monthKey`/`monthOf`/`shiftMonth`/`formatMonthHe`,
+  `actualSpendForMonth(purchases, 'YYYY-MM')`, and `summariseBudget(monthlyBudget,
+  actual)` → `{ budget, actual, remaining, overBudget }`.
+- **`public/app.js`**: the תקציב tab takes a **manual monthly amount** with a
+  month selector; shows exactly three tiles — **תקציב / בפועל / מול תקציב** — and
+  removes the "הערכה (מהתפריט)" card, the prices card, and all missing-price
+  warnings. All money is formatted **₪10,000.00** (`fmtCurrency`, ₪ prefix, 2
+  decimals). The all-houses view drops the estimate column and goes monthly.
+- **`apps-script/Code.gs`**: `budget` column reused as `monthlyBudget`;
+  `savePrices`/`ingredientPrices` removed; `saveHouse` accepts `monthlyBudget`.
+- **Tests**: monthly spend + summary in `test/budget.test.js`.
+
+### Security
+
+Inputs are validated at every boundary: units are whitelisted (`safeUnit` in the
+client, `unit_()` in Apps Script) so an unexpected unit can never reach the math or
+storage; categories are checked with `isCategory`; quantities and budget amounts
+are coerced to non-negative finite numbers; all user-entered text stays escaped via
+`esc()`; the "בוצע" deduction is confirmed and idempotent so it can't double-spend
+stock. No new network surface or secrets.
+
 ### Changed — app title renamed איזון · מטבח → איזון · CHEF
 
 Rebranded the app's display title. "CHEF" is Latin inside the RTL header, so the

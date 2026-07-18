@@ -2,8 +2,8 @@
 
 Plan and budget weekly menus for **ezone** care-home kitchens. Each _house_
 plans meals across a weekly calendar, tracks headcount and allergies, keeps a
-manual stock count, and turns the week's plan into a **net shopping list** and a
-**budget estimate vs. actual**.
+manual stock count, and turns the week's plan into a **net (inventory-first)
+shopping list** and a **monthly budget vs. actual**.
 
 The app is Hebrew-first and right-to-left, matching the people who use it
 (kitchen staff and administrators). It is built to the **E-Zone ecosystem
@@ -57,30 +57,38 @@ Sheet directly.
 ## Features
 
 1. **Weekly menu** — per house, 7 days × 3 meals (breakfast / lunch / dinner).
-   Each dish is a free-text **name + ingredients** `[{ name, category, qtyKg }]`.
-   No recipe bank. One-click **"Copy last week"**.
+   Meals are **collapsible** (accordion) with a dish-name summary line, so a
+   day card stays compact. Each dish is a **name + ingredients**
+   `[{ name, category, qtyPerPerson, unit }]`; the dish name is free text with a
+   **dropdown of existing dishes** (picking one clones its ingredients). One-click
+   **"Copy last week"**.
 2. **Five fixed ingredient categories** everywhere (menu, stock, shopping):
    groceries (מכולת), vegetables (ירקות), fruits (פירות), meat (בשר),
    dry ingredients (יבשים).
-3. **Kilograms only** — you may type grams, they are stored as kg. No
-   free-text units.
+3. **Units** — every quantity picks a unit from a fixed list: ק"ג / גרם /
+   יחידות / ליטר / מ"ל (kg / g / unit / l / ml). Math converts within a family
+   (kg↔g, l↔ml); mass, volume and count never mix.
 4. **Headcount** — manual per house: base patients + staff, editable anytime,
-   with optional **per-day overrides** for guests / trips.
+   with a **live "base total"** (patients + staff) and optional **per-day
+   overrides** for guests / trips.
 5. **Allergies** — per house, a list with counts (e.g. `גלוטן ×2`). Shown
    prominently on the menu screen and printed on the shopping list.
    Informational only in v1 (no enforcement).
-6. **Stock** — per house, what's on hand per ingredient (kg), grouped by the
-   five categories. The cook updates it manually.
-7. **Shopping list** — the core calculation:
-   `sum(week's ingredients × headcount)` → **+20% buffer** → **− current
-   stock** → net to buy (never negative). Grouped by the five categories.
+6. **Stock (מלאי)** — per house, what's on hand per ingredient (with its unit),
+   grouped by the five categories. The cook updates it manually.
+7. **Inventory-first shopping list** — projection only: `sum(week's ingredients ×
+   headcount)` → **+20% buffer** → **− matching stock** → net to buy (never
+   negative), matched by **name + unit family**. Grouped by the five categories.
    **Printable** and **WhatsApp export**.
-8. **Budget** — weekly budget per house, log actual spend, **estimate vs.
-   actual** from price-per-kg (with last-updated date), plus an **admin view
-   across all houses**.
+8. **Serve a day (בוצע)** — marking a day served deducts that day's **actual**
+   consumption (qty × people, no buffer) from the pantry. **Idempotent**: a day
+   can be deducted only once.
+9. **Budget** — a **monthly** budget per house (entered manually), log actual
+   spend, and see **תקציב / בפועל / מול תקציב** in ₪, plus an **admin view across
+   all houses**. No pricing/estimates.
 
-Out of scope for v1 (by design): recipe bank, suppliers, kosher tagging
-(all menus are kosher), dashboard sync.
+Out of scope for v1 (by design): a full recipe bank, suppliers, kosher tagging
+(all menus are kosher), dashboard sync, and any per-ingredient pricing.
 
 ---
 
@@ -92,14 +100,22 @@ network. The **same file** runs in the browser (`<script src>`) and in the Node
 tests (`require`):
 
 ```
-aggregateWeek()   Σ over (day, meal, dish, ingredient) qtyKgPerPerson × people(day)
-applyBuffer()     × 1.20   (the fixed 20% rule — one function, one place)
-subtractStock()   max(0, buffered − onHand)   (never negative)
-buildShoppingList()  runs all three, then groups by the five categories
-estimateCost()    Σ toBuyKg × pricePerKg   (flags ingredients with no price)
+aggregateWeek()     Σ over (day, meal, dish, ingredient) qtyPerPerson(base) × people(day)
+applyBuffer()       × 1.20   (the fixed 20% rule — one function, one place)
+subtractStock()     max(0, buffered − onHand)   (never negative)
+buildShoppingList() runs all three, matches stock by name + unit family, groups by 5 categories
+dayConsumption()    a single day's actual need (qty × people, NO buffer)
+applyConsumption()  deducts served quantities from the pantry (the "בוצע" action)
+summariseBudget()   monthly budget vs actual spend → תקציב / בפועל / מול תקציב
 ```
 
-`people(day) = patients + staff` for that day, after per-day overrides.
+Quantities are carried in each unit family's **base unit** (kg / l / count);
+`convertUnit()` handles kg↔g and l↔ml. `people(day) = patients + staff` for that
+day, after per-day overrides; `baseTotal()` is patients + staff before overrides.
+
+The shopping list is a **pure projection** — it never mutates stock. Stock is
+only reduced when a day is explicitly marked served, and that deduction is
+**idempotent** (guarded by a per-day marker), so it can't run twice.
 
 ---
 
