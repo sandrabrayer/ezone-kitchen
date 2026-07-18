@@ -41,12 +41,14 @@ House {
   weeks       { [weekOf]: { weekOf, days } }   // days = { [day]: { breakfast:[Dish], lunch:[Dish], dinner:[Dish] } }
 }
 Dish       { id, name, ingredients: [ Ingredient ] }
-Ingredient { id, name, category, qtyPerPerson, unit }   // per-person, in `unit`
+Ingredient { id, name, category, qty, unit }   // qty = TOTAL for the dish, in `unit`
 ```
 
-`activeHouseId` is **client-side only** UI state, not shared data. `role` and
-(for a cook) `houseId` are **not** client state — they are read from the signed
-session token, decided by the PIN at login and enforced server-side.
+`qty` is the total for the dish, **not per diner** — headcount does not scale it.
+(Legacy records with `qtyPerPerson` / `qtyKgPerPerson` are read as totals.)
+
+`activeHouseId` is **client-side only** UI state, not shared data. The app is
+open (no login/roles).
 
 ## Categories & units
 
@@ -69,17 +71,21 @@ session token, decided by the PIN at login and enforced server-side.
 ## Calculation flow
 
 ```
-weeks[weekOf] + headcount
-        │  aggregateWeek()   → Σ qtyPerPerson(base) × people(day)   (per ingredient)
+weeks[weekOf]  (headcount is NOT an input — quantities are dish totals)
+        │  aggregateWeek(week, days?)  → Σ ingredient TOTALS (base unit)   (per ingredient)
         ▼
         │  applyBuffer(0.20)         → bufferedQty
         │  subtractStock(stock)      → toBuyQty = max(0, buffered − matching stock)
         ▼
 ShoppingList (projection only; grouped by the 5 categories — never mutates stock)
 
+Weekly plan (צפי שבועי): same aggregateWeek/buildShoppingList, optional `days`
+subset for "from today"; row "חסר" = subtractStock(requiredQty, stockQty) (raw
+need, no buffer).
+
 Marking a day served ("בוצע"), separately and idempotently:
-        dayConsumption(day)  → Σ qtyPerPerson(base) × people(day)   (NO buffer)
-        applyConsumption()   → new stock with served amounts deducted (floored at 0)
+        dayConsumption(week, day)  → Σ ingredient totals for that day   (NO buffer)
+        applyConsumption()         → new stock with served amounts deducted (floored at 0)
 
 Budget (monthly):
         actualSpendForMonth(purchases, YYYY-MM) → summariseBudget(monthlyBudget, actual)
