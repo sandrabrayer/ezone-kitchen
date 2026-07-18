@@ -7,6 +7,43 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Added — pre-seeded item catalog with default par levels (25-person house)
+
+The shared catalog now ships with a full default item list per category, each
+with a default **מלאי מינימום** (par level) sized for a 25-person house over 7
+days. No Apps Script redeploy is needed — the seed lives in the shared domain
+module and merges in on load.
+
+- **`lib/kitchen-domain.js`**: `SEED_CATALOG` — 89 items across the five
+  categories (groceries 11, dry 39, vegetables 21, fruits 10, meat 8) with
+  `name / unit / category / min`. `seedCatalog(catalog)` merges it in.
+  `mergeCatalog` now carries a `min` default and, as its **only** exception to
+  first-seen-wins, fills a *missing* (zero) default min from a later entry — so
+  seed par levels reach items catalogued before par levels existed, without ever
+  clobbering a user's non-zero default. Priority on load: **user catalog > seed
+  > names discovered in stock/menus**.
+- **`public/app.js`**: `loadState` merges `SEED_CATALOG` into the catalog and
+  persists **only when the name set changes** (re-derived mins never trigger a
+  re-write, so the seed self-heals idempotently). The **מלאי "הוסף פריט"** control
+  is now a **category-scoped combobox** (`catalogAddDatalist`) listing that
+  category's seeded items (each hinting its default par level); adding an item
+  (`addStockItem`) **pre-fills its unit + default מלאי מינימום** from the catalog
+  (both editable). Free text still adds a new item and registers it in the
+  catalog. Seeds are defaults — cooks edit/delete/add freely.
+- **`public/styles.css`**: `.stock-add` combobox row.
+- **Tests**: `test/seed-catalog.test.js` (seed validity + category counts + par
+  levels, idempotent merge, **no-overwrite of user edits**, missing-min fill);
+  `test/frontend-shape.test.js` guards the seed merge + add-combobox wiring.
+
+### Security
+
+The seed is static in-repo data (no external input). All merged names/units/
+categories/mins are re-validated through the existing whitelists (`safeUnit`,
+`isCategory`, non-negative min); catalog persistence still drops blank names and
+all rendered text stays `esc()`-escaped. No new network surface, no secrets, and
+no backend schema change.
+
+
 > **Apps Script redeploy required.** This release adds columns/tabs to the Sheet
 > backend (`stock.min`, and the new `catalog`, `stockCounts`, `monthlyBudgets`
 > tabs). After pulling, **publish a NEW VERSION of the EXISTING Apps Script

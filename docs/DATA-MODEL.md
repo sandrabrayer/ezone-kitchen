@@ -14,7 +14,7 @@ into the nested `AppState` the frontend uses.
 | `headcount`        | `houseId`, `basePatients`, `baseStaff`, `overridesJson` | One row per house; overrides stored as JSON. |
 | `allergies`        | `id`, `houseId`, `name`, `count`                    | Many rows per house. |
 | `stock`            | `id`, `houseId`, `name`, `category`, `qty`, `unit`, `min` | Many rows per house. `qty`/`min` are in `unit`. |
-| `catalog`          | `name`, `unit`, `category`                          | **Global** (no houseId) — the shared item catalog. |
+| `catalog`          | `name`, `unit`, `category`                          | **Global** (no houseId) — the shared item catalog. Default par levels (`min`) are **not** stored here; they come from the domain `SEED_CATALOG` and are re-merged on every load. |
 | `stockCounts`      | `id`, `houseId`, `date`, `itemsJson`                | A dated pantry snapshot (ספירת מלאי); upserted by (house, date). |
 | `menus`            | `houseId`, `weekOf`, `daysJson`                     | One row per (house, week); the week's nested days are JSON. |
 | `purchases`        | `id`, `houseId`, `weekOf`, `amount`, `note`, `date` | Actual logged spend (grouped by `date`'s month). |
