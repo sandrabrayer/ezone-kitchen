@@ -364,6 +364,11 @@ tr.below-min td { background: color-mix(in srgb, var(--danger) 9%, transparent);
 tr.below-min td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
 input.over { color: var(--danger); font-weight: 800; }
 
+/* stock: "add item" combobox row (category-scoped catalog dropdown + button) */
+.stock-add { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.7rem; flex-wrap: wrap; }
+.stock-add input { flex: 1; min-width: 180px; }
+.stock-add .add-row { width: auto; min-height: 44px; padding: 0.4rem 1rem; }
+
 /* stock-count mode + history */
 .count-cat { display: flex; align-items: center; gap: 0.5rem; margin: 0.9rem 0 0.2rem; font-size: 1rem; }
 .count-history { margin-top: 0.9rem; }

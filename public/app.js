@@ -212,14 +212,14 @@ async function loadState() {
       }
     }
   }
-  // Self-heal the catalog from existing items; persist only if it grew.
-  const mergedCatalog = KD.mergeCatalog(state.catalog, catalogSeed);
-  if (mergedCatalog.length !== state.catalog.length) {
-    state.catalog = mergedCatalog;
-    persist.catalog();
-  } else {
-    state.catalog = mergedCatalog;
-  }
+  // Merge in (a) the default seed catalog with its par levels and (b) names
+  // discovered in existing stock/menus. `min` defaults come from the domain seed
+  // every load, so the catalog tab need not store them. Persist only when the
+  // NAME SET changes (ignoring re-derived mins) so this never re-writes forever.
+  const nameSig = (cat) => cat.map((c) => KD.catalogKey(c.name)).sort().join('|');
+  const before = nameSig(state.catalog);
+  state.catalog = KD.mergeCatalog(state.catalog, KD.SEED_CATALOG.concat(catalogSeed));
+  if (nameSig(state.catalog) !== before) persist.catalog();
   // Keep the current house if it still exists, else default to the first.
   if (!state.houses.some((h) => h.id === state.activeHouseId)) {
     state.activeHouseId = state.houses[0] ? state.houses[0].id : null;
@@ -464,6 +464,16 @@ function catalogDatalist() {
   return `<datalist id="catalogNames">${state.catalog.map((c) => `<option value="${esc(c.name)}"></option>`).join('')}</datalist>`;
 }
 
+/* Category-scoped datalist for the מלאי "הוסף פריט" combobox — shows the full
+   seeded item list for that category (each option hints its default par level). */
+function catalogAddDatalist(category) {
+  const opts = state.catalog
+    .filter((c) => c.category === category)
+    .map((c) => `<option value="${esc(c.name)}">${c.min > 0 ? 'מינ׳ ' + esc(String(c.min)) + ' ' + esc(KD.UNIT_LABELS_HE[KD.safeUnit(c.unit)]) : ''}</option>`)
+    .join('');
+  return `<datalist id="catalogAddList">${opts}</datalist>`;
+}
+
 /* A menu ingredient row: name (catalog combobox) | qty | unit | delete.
    Category is derived from the catalog by name (no per-row category box). */
 function renderDish(day, meal, dish) {
@@ -584,7 +594,11 @@ function renderStock(house) {
       ${last ? `<br>ספירה אחרונה: <strong>${esc(KD.formatDateHe(last.date))}</strong>` : ''}</p>
     <div class="subtabs">${tabs}</div>
     <table><thead><tr><th>מרכיב</th><th>קטגוריה</th><th>כמות במלאי</th><th>מלאי מינימום</th><th></th></tr></thead><tbody>${rows}</tbody></table>
-    <button class="add-row" data-act="stkAdd" data-cat="${active}" style="margin-top:.7rem">＋ הוסף פריט ל${esc(KD.CATEGORY_LABELS_HE[active])}</button>
+    <div class="stock-add">
+      <input list="catalogAddList" id="stkAddName" placeholder="בחר או הקלד פריט ל${esc(KD.CATEGORY_LABELS_HE[active])}…" />
+      ${catalogAddDatalist(active)}
+      <button class="add-row" data-act="stkAdd" data-cat="${active}">＋ הוסף</button>
+    </div>
     ${countHistory.length ? `<details class="count-history"><summary class="muted">היסטוריית ספירות (${countHistory.length})</summary>
       <ul class="count-list">${countHistory.map((c) => `<li><span>${esc(KD.formatDateHe(c.date))} · ${(c.items || []).length} פריטים</span>
         <button class="ghost" data-act="countRestore" data-date="${esc(c.date)}">שחזר</button></li>`).join('')}</ul></details>` : ''}
@@ -1045,7 +1059,7 @@ async function onClick(e) {
     case 'algDel': house.allergies = house.allergies.filter((a) => a.id !== d.id); persist.allergies(house); render(); break;
 
     case 'stockCat': state.stockCat = d.cat; render(); break;
-    case 'stkAdd': house.stock.push({ id: KD.newId('stk'), name: '', category: KD.isCategory(d.cat) ? d.cat : 'groceries', qty: 0, unit: 'kg', minQty: 0 }); persist.stock(house); render(); break;
+    case 'stkAdd': addStockItem(house, d.cat); break;
     case 'stkDel': house.stock = house.stock.filter((s) => s.id !== d.id); persist.stock(house); render(); break;
 
     case 'countStart': state.countMode = true; state.countDate = KD.toISODate(new Date()); state.countValues = {}; render(); break;
@@ -1117,6 +1131,24 @@ function saveStockCount(house) {
   state.countValues = {};
   render();
   setStatus('הספירה נשמרה ✓');
+}
+
+/* Add a pantry item from the category's "הוסף פריט" combobox. A seeded/known
+   item pre-fills its unit and default **מלאי מינימום** (par level) from the
+   catalog (both editable afterwards); free text adds a blank item under the
+   active category and registers the new name in the catalog. */
+function addStockItem(house, cat) {
+  const category = KD.isCategory(cat) ? cat : 'groceries';
+  const input = $('#stkAddName');
+  const name = input ? String(input.value || '').trim() : '';
+  const hit = name ? KD.catalogLookup(state.catalog, name) : null;
+  const unit = hit ? KD.safeUnit(hit.unit) : 'kg';
+  const minQty = hit ? (Number(hit.min) > 0 ? Number(hit.min) : 0) : 0;
+  house.stock.push({ id: KD.newId('stk'), name, category, qty: 0, unit, minQty });
+  if (name) catalogAdd([{ name, unit, category, min: minQty }]);
+  state.stockCat = category;
+  persist.stock(house);
+  render();
 }
 
 /* Restore the pantry to a previously saved dated snapshot. */

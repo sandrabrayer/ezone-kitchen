@@ -32,6 +32,14 @@ test('new stock/count/budget/overrun controls are wired', () => {
   }
 });
 
+test('the default seed catalog is merged on load and the add-combobox is wired', () => {
+  assert.match(app, /KD\.SEED_CATALOG/, 'loadState must merge the domain seed catalog');
+  assert.match(app, /catalogAddDatalist/, 'per-category add datalist helper');
+  assert.match(app, /id="stkAddName"/, 'the "הוסף פריט" combobox input');
+  assert.match(app, /function addStockItem/, 'add handler that pre-fills the par level');
+  assert.match(app, /list="catalogAddList"/, 'add input references the category datalist');
+});
+
 test('Code.gs declares the new tabs the frontend relies on', () => {
   const gs = fs.readFileSync(path.join(__dirname, '..', 'apps-script', 'Code.gs'), 'utf8');
   for (const tab of ['catalog', 'stockCounts', 'monthlyBudgets']) {

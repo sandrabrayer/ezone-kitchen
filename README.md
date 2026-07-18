@@ -67,9 +67,15 @@ Sheet directly.
    (not per diner). Ingredient rows are **name | qty | unit | delete** — the name
    is a **catalog combobox** (see below) and the category comes from the catalog.
    One-click **"Copy last week"**.
-3. **Shared item catalog** — a global list of `{ name, unit, category }` seeded
-   from existing stock + menu items. **Every** item/ingredient name field is a
-   searchable **dropdown that still accepts free text**; new names are auto-added.
+3. **Shared item catalog** — a global list of `{ name, unit, category, min }`,
+   **pre-seeded** with a full default item list per category (89 items) and
+   default **par levels (מלאי מינימום)** sized for a 25-person house, plus any
+   names discovered in stock + menus. **Every** name field is a searchable
+   **dropdown that still accepts free text**; new names are auto-added. In מלאי,
+   each category's **"הוסף פריט"** combobox lists that category's seeded items and
+   **pre-fills the par level** when one is added (editable — seeds are defaults,
+   not locked). The seed lives in the shared domain module, so it needs no
+   backend redeploy.
 4. **Five fixed ingredient categories** everywhere (מכולת / ירקות / פירות / בשר /
    יבשים) and a fixed **unit** list ק"ג / גרם / יחידות / ליטר / מ"ל. Math converts
    within a family (kg↔g, l↔ml); mass, volume and count never mix.
