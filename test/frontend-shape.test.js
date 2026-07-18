@@ -40,6 +40,22 @@ test('the default seed catalog is merged on load and the add-combobox is wired',
   assert.match(app, /list="catalogAddList"/, 'add input references the category datalist');
 });
 
+test('seed-catalog is resilient: seeded before the per-house loop + at render time', () => {
+  // Guards the "seed not appearing" regression: a throw in per-house normalisation
+  // must not skip seeding, and a missing SEED_CATALOG export must not throw.
+  assert.match(app, /function seedList\(\)/, 'guarded seedList() accessor');
+  assert.match(app, /Array\.isArray\(KD\.SEED_CATALOG\)/, 'seedList must guard a missing export');
+  assert.match(app, /function ensureCatalogSeeded/, 'render-time belt-and-suspenders');
+  // The seed must be merged into state.catalog BEFORE the house loop runs.
+  const seedIdx = app.indexOf('KD.mergeCatalog(backendCatalog, seedList())');
+  const loopIdx = app.indexOf('for (const h of state.houses)');
+  assert.ok(seedIdx > 0 && loopIdx > 0 && seedIdx < loopIdx, 'seed must be merged before the per-house loop');
+  // render() must ensure the seed before drawing datalists.
+  assert.match(app, /function render\(\)\s*\{\s*ensureCatalogSeeded\(\);/, 'render() calls ensureCatalogSeeded first');
+  // Per-house normalisation must tolerate corrupt menus (non-array meals).
+  assert.match(app, /Array\.isArray\(plan\[meal\]\)/, 'meal normalisation guards non-array meals');
+});
+
 test('Code.gs declares the new tabs the frontend relies on', () => {
   const gs = fs.readFileSync(path.join(__dirname, '..', 'apps-script', 'Code.gs'), 'utf8');
   for (const tab of ['catalog', 'stockCounts', 'monthlyBudgets']) {

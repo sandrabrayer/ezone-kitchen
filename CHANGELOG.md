@@ -7,6 +7,43 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Fixed — seeded catalog not appearing (datalists showed only user items)
+
+In production the מלאי add-combobox and the name datalists showed only items the
+cook had created — none of the 89 `SEED_CATALOG` defaults appeared, even after the
+earlier `saveCatalog` backend error was resolved.
+
+**Root cause:** `loadState` merged the seed catalog **after** a per-house
+normalisation loop. Corrupt/partial stored data — e.g. a menu whose meal wasn't
+an array, so `dishes.map(...)` threw — aborted that loop **before** the seed
+merge ran. `state.catalog` was left at the user-only value assigned earlier, the
+load error was swallowed, and the app rendered with only the cook's items. (A
+stale `/lib/kitchen-domain.js` lacking `SEED_CATALOG` would fail the same way.)
+
+- **`public/app.js`**:
+  - The catalog is seeded **immediately, before** any per-house normalisation, so
+    the seed survives even if a house has corrupt data — via a guarded
+    `seedList()` (`Array.isArray(KD.SEED_CATALOG) ? … : []`) that also tolerates
+    an older domain module without the export.
+  - Per-house normalisation moved to `normaliseHouse()`, wrapped in try/catch (one
+    bad house can't abort the whole load) and hardened with `Array.isArray`
+    guards: every stored week is rebuilt into a complete 7-day × 3-meal structure,
+    so a missing day or a non-array meal can't throw.
+  - New render-time `ensureCatalogSeeded()` (belt-and-suspenders) guarantees the
+    seed is in the in-memory catalog before any datalist/combobox draws, even if
+    the load path was interrupted.
+  - `renderMenu` tolerates an incomplete week (missing day / non-array meal).
+  - Persist still fires only when the catalog **name set** changes vs the backend,
+    so the fix self-heals idempotently (no repeat writes).
+- **Tests**: `test/seed-regression.test.js` — load with `catalog=[user item]` →
+  user item **+ all 89 seed** items, user untouched; a **partial failed-save**
+  snapshot (junk/blank rows) still ends fully seeded; idempotent after a
+  min-less save round-trip. `test/frontend-shape.test.js` guards the ordering
+  (seed merged before the house loop), the `seedList` export guard, the
+  render-time ensure, and the non-array-meal guard.
+- No backend change; **no Apps Script redeploy needed**.
+
+
 ### Added — pre-seeded item catalog with default par levels (25-person house)
 
 The shared catalog now ships with a full default item list per category, each

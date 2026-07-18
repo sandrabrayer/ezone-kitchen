@@ -168,61 +168,93 @@ function normStock(s) {
   };
 }
 
+/* The default seed catalog from the shared domain module, guarded against an
+   older/partial `/lib/kitchen-domain.js` that predates it (so a version skew
+   can never throw and wipe the seed). */
+function seedList() {
+  return Array.isArray(KD.SEED_CATALOG) ? KD.SEED_CATALOG : [];
+}
+const catalogSig = (cat) => cat.map((c) => KD.catalogKey(c.name)).sort().join('|');
+
 /* ============================ load ============================ */
 async function loadState() {
   const d = await api('load', {});
   state.houses = Array.isArray(d.houses) ? d.houses : [];
-  state.catalog = KD.mergeCatalog(Array.isArray(d.catalog) ? d.catalog : [], []);
-  const catalogSeed = []; // names discovered in stock + menus, seeded into the catalog
+
+  // Seed the catalog IMMEDIATELY, before any per-house normalisation runs. The
+  // seed must survive even if a house has corrupt/unexpected stored data that
+  // throws below — otherwise the datalists silently fall back to user-only items
+  // (the bug this fixes). Priority: backend catalog > seed defaults.
+  const backendCatalog = Array.isArray(d.catalog) ? d.catalog : [];
+  const backendSig = catalogSig(KD.mergeCatalog(backendCatalog, []));
+  state.catalog = KD.mergeCatalog(backendCatalog, seedList());
+
+  const catalogSeed = []; // names discovered in stock + menus, merged in below
   for (const h of state.houses) {
-    h.headcount = h.headcount || KD.emptyHeadcount();
-    h.allergies = h.allergies || [];
-    h.stock = (h.stock || []).map(normStock);
-    h.purchases = h.purchases || [];
-    h.consumption = h.consumption || []; // served-day markers (idempotency)
-    h.stockCounts = h.stockCounts || []; // dated pantry snapshots
-    h.budgets = h.budgets || {};         // per-month { budget, overrun, overrunNote }
-    h.weeks = h.weeks || {};
-    // Legacy single monthlyBudget → migrate into the current month if that month
-    // has no explicit budget yet (each month is independent from here on).
-    const legacy = typeof h.monthlyBudget === 'number' ? h.monthlyBudget
-      : (typeof h.weeklyBudget === 'number' ? h.weeklyBudget : 0);
-    if (legacy > 0 && !h.budgets[state.currentMonth]) {
-      h.budgets[state.currentMonth] = { budget: legacy, overrun: 0, overrunNote: '' };
-    }
-    h.stock.forEach((s) => { if (s.name) catalogSeed.push({ name: s.name, unit: s.unit, category: s.category }); });
-    // Normalise every stored ingredient to { qty, unit }.
-    for (const weekOf of Object.keys(h.weeks)) {
-      const wk = h.weeks[weekOf];
-      if (!wk || !wk.days) continue;
-      for (const day of KD.DAYS) {
-        const plan = wk.days[day];
-        if (!plan) continue;
-        for (const meal of KD.MEALS) {
-          plan[meal] = (plan[meal] || []).map((dish) => ({
-            id: dish.id || KD.newId('dish'),
-            name: String(dish.name || ''),
-            ingredients: (dish.ingredients || []).map((ing) => {
-              const n = normIngredient(ing);
-              if (n.name) catalogSeed.push({ name: n.name, unit: n.unit, category: n.category });
-              return n;
-            }),
-          }));
-        }
-      }
+    // One malformed house must not abort the whole load (and skip seeding the
+    // rest); isolate each so the app still comes up.
+    try {
+      normaliseHouse(h, catalogSeed);
+    } catch (err) {
+      if (window.console) console.warn('skipping malformed house', h && h.id, err);
     }
   }
-  // Merge in (a) the default seed catalog with its par levels and (b) names
-  // discovered in existing stock/menus. `min` defaults come from the domain seed
-  // every load, so the catalog tab need not store them. Persist only when the
-  // NAME SET changes (ignoring re-derived mins) so this never re-writes forever.
-  const nameSig = (cat) => cat.map((c) => KD.catalogKey(c.name)).sort().join('|');
-  const before = nameSig(state.catalog);
-  state.catalog = KD.mergeCatalog(state.catalog, KD.SEED_CATALOG.concat(catalogSeed));
-  if (nameSig(state.catalog) !== before) persist.catalog();
+
+  // Merge names discovered in stock/menus on top of (backend + seed). `min`
+  // defaults always come from the domain seed, so the catalog tab need not store
+  // them. Persist only when the NAME SET changed vs the backend (re-derived mins
+  // never trigger a write, so this self-heals idempotently).
+  state.catalog = KD.mergeCatalog(state.catalog, catalogSeed);
+  if (catalogSig(state.catalog) !== backendSig) persist.catalog();
+
   // Keep the current house if it still exists, else default to the first.
   if (!state.houses.some((h) => h.id === state.activeHouseId)) {
     state.activeHouseId = state.houses[0] ? state.houses[0].id : null;
+  }
+}
+
+/* Normalise one house in place and collect its item names for the catalog.
+   Defensive against corrupt stored data (e.g. a menu meal that isn't an array). */
+function normaliseHouse(h, catalogSeed) {
+  h.headcount = h.headcount || KD.emptyHeadcount();
+  h.allergies = Array.isArray(h.allergies) ? h.allergies : [];
+  h.stock = (Array.isArray(h.stock) ? h.stock : []).map(normStock);
+  h.purchases = Array.isArray(h.purchases) ? h.purchases : [];
+  h.consumption = Array.isArray(h.consumption) ? h.consumption : []; // served-day markers
+  h.stockCounts = Array.isArray(h.stockCounts) ? h.stockCounts : []; // dated snapshots
+  h.budgets = (h.budgets && typeof h.budgets === 'object') ? h.budgets : {};
+  h.weeks = (h.weeks && typeof h.weeks === 'object') ? h.weeks : {};
+  // Legacy single monthlyBudget → migrate into the current month if unset.
+  const legacy = typeof h.monthlyBudget === 'number' ? h.monthlyBudget
+    : (typeof h.weeklyBudget === 'number' ? h.weeklyBudget : 0);
+  if (legacy > 0 && !h.budgets[state.currentMonth]) {
+    h.budgets[state.currentMonth] = { budget: legacy, overrun: 0, overrunNote: '' };
+  }
+  h.stock.forEach((s) => { if (s.name) catalogSeed.push({ name: s.name, unit: s.unit, category: s.category }); });
+  // Rebuild every stored week into a COMPLETE 7-day × 3-meal structure, carrying
+  // over existing dishes. This tolerates partial/corrupt menus (a missing day, a
+  // meal that isn't an array) so no downstream code can trip over them.
+  for (const weekOf of Object.keys(h.weeks)) {
+    const wk = h.weeks[weekOf];
+    const days = (wk && wk.days && typeof wk.days === 'object') ? wk.days : {};
+    const rebuilt = {};
+    for (const day of KD.DAYS) {
+      const plan = (days[day] && typeof days[day] === 'object') ? days[day] : {};
+      rebuilt[day] = {};
+      for (const meal of KD.MEALS) {
+        const dishes = Array.isArray(plan[meal]) ? plan[meal] : [];
+        rebuilt[day][meal] = dishes.map((dish) => ({
+          id: (dish && dish.id) || KD.newId('dish'),
+          name: String((dish && dish.name) || ''),
+          ingredients: (Array.isArray(dish && dish.ingredients) ? dish.ingredients : []).map((ing) => {
+            const n = normIngredient(ing);
+            if (n.name) catalogSeed.push({ name: n.name, unit: n.unit, category: n.category });
+            return n;
+          }),
+        }));
+      }
+    }
+    h.weeks[weekOf] = { weekOf: weekOf, days: rebuilt };
   }
 }
 
@@ -297,7 +329,19 @@ function renderChrome() {
      </button>`).join('');
 }
 
+/* Belt-and-suspenders: guarantee the default seed is present in the in-memory
+   catalog before anything renders, so the datalists/comboboxes always include it
+   even if the load path was interrupted. Idempotent and cheap (skips once the
+   seed is present). */
+function ensureCatalogSeeded() {
+  const seed = seedList();
+  if (!seed.length) return;
+  if (KD.catalogLookup(state.catalog, seed[0].name)) return; // already seeded
+  state.catalog = KD.mergeCatalog(state.catalog, seed);
+}
+
 function render() {
+  ensureCatalogSeeded();
   applyHouseTheme();
   renderChrome();
   const screen = $('#screen');
@@ -394,8 +438,9 @@ function renderMenu(house) {
     const served = KD.isDayExecuted(house.consumption, weekOf, day);
     const canServe = KD.dayConsumption(week, day).length > 0;
 
+    const dayPlan = (week.days && week.days[day]) || {};
     const meals = KD.MEALS.map((meal) => {
-      const dishes = week.days[day][meal] || [];
+      const dishes = Array.isArray(dayPlan[meal]) ? dayPlan[meal] : [];
       const open = !!state.mealOpen[mealKey(day, meal)];
       const names = dishes.map((dd) => String(dd.name || '').trim()).filter(Boolean);
       const summary = names.length ? names.join(' · ') : '—';
