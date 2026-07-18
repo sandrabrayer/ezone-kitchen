@@ -18,6 +18,42 @@ test('the per-diner "לסועד" label is absent everywhere', () => {
   assert.ok(!/לסועד/.test(app));
 });
 
+test('stock rows are full-width cards with a catalog-combobox name (bug: 36px name box)', () => {
+  assert.match(app, /function stockItemCard/, 'stock items render as cards');
+  assert.match(app, /class="stk-name" list="catalogAddList"/, 'name is the category catalog combobox');
+  assert.ok(!/data-act="stkCat"/.test(app), 'the per-row category <select> is gone (name auto-fills it)');
+  assert.match(app, /placeholder="0" data-act="stkQty"/, 'qty box shows a "0" placeholder');
+});
+
+test('bottom "הוסף" row is for free-text new items only', () => {
+  assert.match(app, /id="stkAddName" placeholder="פריט חדש שלא ברשימה/, 'placeholder guides new items');
+  // the bottom add input must NOT carry a datalist (that would make it a picker)
+  assert.ok(!/id="stkAddName"[^>]*list=/.test(app), 'bottom add is plain free text');
+});
+
+test('stock count uses the FULL catalog (buildCountList / applyStockCount)', () => {
+  assert.match(app, /KD\.buildCountList\(state\.catalog, house\.stock\)/, 'count lists the whole catalog');
+  assert.match(app, /KD\.applyStockCount\(state\.catalog, house\.stock, state\.countValues\)/, 'save rebuilds stock from the count');
+  assert.match(app, /data-act="countQty" data-key=/, 'count inputs are keyed by catalog key');
+});
+
+test('shopping list has a persisted per-week "פריטים נוספים" section', () => {
+  assert.match(app, /function renderShoppingExtras/, 'extras section');
+  assert.match(app, /פריטים נוספים/, 'extras heading');
+  for (const act of ['extraAdd', 'extraDel', 'extraName', 'extraQty', 'extraUnit']) {
+    assert.ok(app.includes("'" + act + "'") || app.includes('"' + act + '"') || app.includes('data-act="' + act + '"'), 'missing ' + act);
+  }
+  assert.match(app, /saveShoppingExtras/, 'extras persist to the backend');
+  assert.match(app, /weekExtras\(house, weekOf\)/, 'extras are filtered per week');
+});
+
+test('Code.gs backs the shoppingExtras tab + action', () => {
+  const gs = fs.readFileSync(path.join(__dirname, '..', 'apps-script', 'Code.gs'), 'utf8');
+  assert.match(gs, /shoppingExtras:\s*\['id',\s*'houseId',\s*'weekOf',\s*'name',\s*'qty',\s*'unit'\]/, 'shoppingExtras tab schema');
+  assert.match(gs, /case 'saveShoppingExtras'/, 'saveShoppingExtras action');
+  assert.match(gs, /shoppingExtras: \(shoppingExtras\[id\]/, 'load returns shoppingExtras');
+});
+
 test('ingredient name is a catalog combobox; row keeps name/qty/unit/delete only', () => {
   assert.match(app, /class="ing-name" list="catalogNames"/);
   assert.match(app, /data-act="ingQty"/);

@@ -7,6 +7,66 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+> **Apps Script redeploy required.** Adds a `shoppingExtras` tab to the Sheet
+> backend. After pulling, **publish a NEW VERSION of the EXISTING Apps Script
+> deployment** (pencil icon — never a new deployment). The tab is created on
+> first write.
+
+### Fixed — stock rows showed an empty name box on phones (name clipped)
+
+Seeded stock rows (חלב, לחם, קוטג') rendered with an apparently empty name input
+and the text spilling behind it. **Root cause:** the 5-column editable stock
+table collapsed the name column to ~36px on a phone, clipping the Hebrew name
+(the value was present, just invisible).
+
+- **`public/app.js` / `public/styles.css`**: stock items now render as
+  **mobile-friendly cards** (`stockItemCard`) — a **full-width name** on top, then
+  qty · unit · minimum · delete. The name input is now ~330px (was ~36px); the
+  value always shows inside it. The below-minimum red highlight moved to the card.
+
+### Changed — every stock row's name is the catalog combobox (auto-fill)
+
+- **`public/app.js`**: each stock row's name field is the **category catalog
+  combobox** (`list="catalogAddList"`). Picking (or finishing typing) an item
+  **auto-fills its unit, category and default מלאי מינימום**; the per-row category
+  `<select>` was removed (category comes from the catalog). A genuinely new name
+  is registered in the catalog.
+- The bottom **"הוסף"** row is now **only for free-text items not in the catalog**
+  — placeholder **"פריט חדש שלא ברשימה…"** (no datalist); adding registers the item
+  permanently in the catalog.
+- The empty quantity box shows a visible **"0"** placeholder.
+
+### Changed — ספירת מלאי counts the FULL catalog
+
+- **`lib/kitchen-domain.js`**: `buildCountList(catalog, stock)` (union of catalog +
+  any free-text stock item, grouped/ordered, qty defaulting to current stock or 0)
+  and `applyStockCount(catalog, stock, countedByKey)` (rebuild the pantry:
+  existing items take the counted qty incl. 0, catalog items counted > 0 are
+  added, catalog items left at 0 are omitted). Pure + tested.
+- **`public/app.js`**: the count now lists **every catalog item** grouped by
+  category (not just what's already in stock); each with unit + qty input
+  defaulting to the current stock qty (0 if not stocked). Saving writes the full
+  pantry and stores the dated snapshot. **The count is the full inventory summary.**
+- **Tests**: `test/count-list.test.js` (union list, defaults, add-on-count,
+  keep-at-0, no-loss full summary, no input mutation).
+
+### Added — shopping list "פריטים נוספים" (manual extras, per week)
+
+- **`public/app.js`**: a **פריטים נוספים** section on the shopping list where the
+  cook adds free items (name via catalog combobox or free text, qty, unit) to the
+  **current week's** list. Persisted per week, removable, and **included in the
+  printed / WhatsApp list**.
+- **`apps-script/Code.gs`**: new `shoppingExtras` tab (`id | houseId | weekOf |
+  name | qty | unit`) + `saveShoppingExtras` action; returned by `load`.
+
+### Security
+
+New inputs pass the existing guards: units whitelisted (`safeUnit` / `unit_`),
+quantities coerced to non-negative finite numbers, catalog additions drop blank
+names, and all rendered text stays `esc()`-escaped. `applyStockCount` is pure (no
+input mutation). Extras are stored as plain fields (no formula/HTML injection).
+
+
 ### Fixed — seeded catalog not appearing (datalists showed only user items)
 
 In production the מלאי add-combobox and the name datalists showed only items the

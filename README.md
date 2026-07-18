@@ -81,18 +81,23 @@ Sheet directly.
    within a family (kg↔g, l↔ml); mass, volume and count never mix.
 5. **Allergies** — per house, a list with counts (e.g. `גלוטן ×2`), shown on the
    menu and printed on the shopping list. Informational only.
-6. **Stock (מלאי)** — per house, what's on hand per item (with its unit) and a
+6. **Stock (מלאי)** — per house, on-hand quantity per item (with its unit) and a
    **minimum-stock (par) level**; items **below minimum are highlighted red**.
-   A **"ספירת מלאי"** count mode edits every quantity in one dated pass and saves
-   a **snapshot** (restorable); the header shows the last count date.
+   Each item is a **card** whose name is the category **catalog combobox**
+   (selecting auto-fills unit/category/par); a bottom row adds a brand-new
+   (non-catalog) item. **"ספירת מלאי"** count mode lists the **full catalog**
+   grouped by category — fill the actual quantity for each (0 if none); saving
+   rebuilds the pantry from the count (items > 0 get added) and stores a dated
+   **snapshot** (restorable). The count is the full inventory summary.
 7. **Weekly plan (צפי שבועי)** — every item needed across the week vs current
    stock, with the shortfall to buy (`פריט | נדרש | מינימום | במלאי | חסר`).
    Filter **whole week / from today** with a "days remaining" indicator; "חסר"
    reflects both the menu need and the top-up to minimum.
-8. **Inventory-first shopping list** — projection only: for each item buy the
+8. **Inventory-first shopping list** — projection: for each item buy the
    **larger** of the menu shortfall (`week totals +20% − stock`) and the **top-up
-   to its minimum** (never the sum), matched by **name + unit family**. Grouped by
-   the five categories. **Printable** and **WhatsApp export**.
+   to its minimum** (never the sum), matched by **name + unit family**. Plus a
+   **"פריטים נוספים"** section for manual extras (per week, persisted). Grouped by
+   the five categories. **Printable** and **WhatsApp export** (extras included).
 9. **Serve a day (בוצע)** — marking a day served deducts that day's dish totals
    (**no** buffer) from the pantry. **Idempotent**: a day is deducted only once.
 10. **Budget (תקציב)** — a **monthly** budget kept **per month** (entered manually

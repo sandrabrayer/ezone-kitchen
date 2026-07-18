@@ -16,6 +16,7 @@ into the nested `AppState` the frontend uses.
 | `stock`            | `id`, `houseId`, `name`, `category`, `qty`, `unit`, `min` | Many rows per house. `qty`/`min` are in `unit`. |
 | `catalog`          | `name`, `unit`, `category`                          | **Global** (no houseId) — the shared item catalog. Default par levels (`min`) are **not** stored here; they come from the domain `SEED_CATALOG` and are re-merged on every load. |
 | `stockCounts`      | `id`, `houseId`, `date`, `itemsJson`                | A dated pantry snapshot (ספירת מלאי); upserted by (house, date). |
+| `shoppingExtras`   | `id`, `houseId`, `weekOf`, `name`, `qty`, `unit`    | Manual "פריטים נוספים" the cook adds to a week's shopping list. |
 | `menus`            | `houseId`, `weekOf`, `daysJson`                     | One row per (house, week); the week's nested days are JSON. |
 | `purchases`        | `id`, `houseId`, `weekOf`, `amount`, `note`, `date` | Actual logged spend (grouped by `date`'s month). |
 | `consumption`      | `id`, `houseId`, `weekOf`, `day`, `executedAt`      | A "served" marker per day — makes the stock deduction idempotent. |
@@ -38,6 +39,8 @@ header name, but keeping existing columns in place avoids surprises.
 load → {
   houses: [ House ],
   catalog: [ { name, unit, category } ]        // GLOBAL shared item catalog
+  // (client re-derives each catalog item's default `min` par level from the
+  //  domain SEED_CATALOG on load; it is not stored in the catalog tab)
 }
 House {
   id, name,
@@ -49,6 +52,7 @@ House {
   purchases   [ { id, weekOf, amount, note, date } ],
   consumption [ { id, weekOf, day, executedAt } ],   // served-day markers (idempotency)
   stockCounts [ { id, date, items: [ StockItem ] } ], // dated snapshots
+  extras      [ { id, weekOf, name, qty, unit } ],   // manual shopping-list extras (from `shoppingExtras`)
   weeks       { [weekOf]: { weekOf, days } }   // days = { [day]: { breakfast:[Dish], lunch:[Dish], dinner:[Dish] } }
 }
 Dish       { id, name, ingredients: [ Ingredient ] }

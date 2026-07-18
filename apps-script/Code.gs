@@ -42,7 +42,8 @@ var SHEETS = {
   stockCounts: ['id', 'houseId', 'date', 'itemsJson'],
   menus: ['houseId', 'weekOf', 'daysJson'],
   purchases: ['id', 'houseId', 'weekOf', 'amount', 'note', 'date'],
-  consumption: ['id', 'houseId', 'weekOf', 'day', 'executedAt']
+  consumption: ['id', 'houseId', 'weekOf', 'day', 'executedAt'],
+  shoppingExtras: ['id', 'houseId', 'weekOf', 'name', 'qty', 'unit']
 };
 
 var CATEGORIES = ['groceries', 'vegetables', 'fruits', 'meat', 'dry'];
@@ -87,6 +88,9 @@ function doPost(e) {
         })); break;
         case 'saveConsumption': result = replaceForHouse_('consumption', body.houseId, (body.consumption || []).map(function (c) {
           return [c.id || uid_('cons'), body.houseId, c.weekOf || '', c.day || '', c.executedAt || ''];
+        })); break;
+        case 'saveShoppingExtras': result = replaceForHouse_('shoppingExtras', body.houseId, (body.extras || []).map(function (x) {
+          return [x.id || uid_('xtra'), body.houseId, x.weekOf || '', x.name || '', num_(x.qty), unit_(x.unit)];
         })); break;
         case 'saveMenu': result = saveMenu_(body.houseId, body.weekOf, body.days); break;
         default: result = { ok: false, error: 'unknown_action:' + action };
@@ -274,6 +278,7 @@ function loadAll_() {
   var consumption = groupBy_(readRows_('consumption'), 'houseId');
   var stockCounts = groupBy_(readRows_('stockCounts'), 'houseId');
   var monthlyBudgets = groupBy_(readRows_('monthlyBudgets'), 'houseId');
+  var shoppingExtras = groupBy_(readRows_('shoppingExtras'), 'houseId');
   var menus = groupBy_(readRows_('menus'), 'houseId');
   var catalog = readRows_('catalog').map(function (c) {
     return { name: String(c.name || ''), unit: unit_(c.unit), category: category_(c.category) };
@@ -304,6 +309,7 @@ function loadAll_() {
       purchases: (purchases[id] || []).map(function (p) { return { id: String(p.id), weekOf: String(p.weekOf), amount: num_(p.amount), note: p.note || '', date: String(p.date || '') }; }),
       consumption: (consumption[id] || []).map(function (c) { return { id: String(c.id), weekOf: String(c.weekOf), day: String(c.day), executedAt: String(c.executedAt || '') }; }),
       stockCounts: (stockCounts[id] || []).map(function (c) { return { id: String(c.id), date: String(c.date), items: safeParse_(c.itemsJson, []) }; }),
+      shoppingExtras: (shoppingExtras[id] || []).map(function (x) { return { id: String(x.id), weekOf: String(x.weekOf), name: x.name || '', qty: num_(x.qty), unit: unit_(x.unit) }; }),
       weeks: weeks
     };
   });
