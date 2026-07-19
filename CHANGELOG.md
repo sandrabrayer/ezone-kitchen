@@ -7,6 +7,34 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Fixed — min top-up (צפי / קניות) missed catalog items not yet in stock
+
+**Symptom:** in צפי → "השלמה למלאי מינימום" only items that already existed as
+stock rows appeared (e.g. ~4); catalog items with a par level but not yet
+stocked (implicit qty 0) were missing. The shopping list (קניות) had the same
+gap.
+
+**Root cause:** the frontend's `effectiveStock` built the shortfall stock by
+mapping over the house's stock array only (`withEffectiveMins(house.stock, …)`),
+so a catalog item with no stock row never reached `buildShoppingList` /
+`weeklyPlan` for the par top-up.
+
+**Fix:** new pure domain helper **`effectiveCatalogStock(catalog, stock,
+baseTotal, overrides)`** builds shortfall rows over the FULL catalog ∪ stock —
+every catalog item (quantity from a matching stock row, else **0**) plus any
+free-text pantry item, each carrying its EFFECTIVE (scaled/override) par. The
+frontend's `effectiveStock` now uses it, so both קניות and צפי top up every
+catalog item with a par, treating missing stock as 0. `withEffectiveMins`
+(the per-row מלאי min) is unchanged. No Apps Script / schema change.
+
+- **Tests**: `test/plan-topup.test.js` — regression: empty stock + seeded
+  catalog → the plan top-up (and קניות) contain **every** item with effective
+  min > 0 (89/89); unstocked items surface with `חסר = effective min`; items
+  stocked at/above par stay hidden; free-text items preserved; overrides win.
+- **Browser smoke**: on an empty-menu week with only a couple of stock items, the
+  "השלמה למלאי מינימום" section now lists the full catalog (89 rows) including
+  items not in stock (אורז, סוכר).
+
 ### Added — reset par/price overrides to the seed default
 
 Cooks can now undo manual par/price overrides:
