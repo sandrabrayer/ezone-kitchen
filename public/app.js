@@ -92,6 +92,8 @@ const persist = {
     api('saveBudget', { houseId: h.id, month, budget: budgetForMonth(h, month) })),
   stockCount: (h, count) => scheduleSave('cnt:' + h.id + ':' + count.date, () =>
     api('saveStockCount', { houseId: h.id, count })),
+  shoppingExtras: (h, weekOf) => scheduleSave('extras:' + h.id + ':' + weekOf, () =>
+    api('saveShoppingExtras', { houseId: h.id, weekOf, extras: (h.shoppingExtras && h.shoppingExtras[weekOf]) || [] })),
 };
 
 /* ============================ state ============================ */
@@ -168,6 +170,17 @@ function normStock(s) {
   };
 }
 
+/* Coerce the per-week shopping-extras map { weekOf: [extra,…] } from the Sheet
+   (and older records) into normalised shapes; anything unexpected → {}. */
+function normaliseExtras(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out = {};
+  for (const wk of Object.keys(raw)) {
+    if (Array.isArray(raw[wk])) out[wk] = raw[wk].map((e) => KD.readShoppingExtra(e));
+  }
+  return out;
+}
+
 /* The default seed catalog from the shared domain module, guarded against an
    older/partial `/lib/kitchen-domain.js` that predates it (so a version skew
    can never throw and wipe the seed). */
@@ -222,6 +235,7 @@ function normaliseHouse(h, catalogSeed) {
   h.purchases = Array.isArray(h.purchases) ? h.purchases : [];
   h.consumption = Array.isArray(h.consumption) ? h.consumption : []; // served-day markers
   h.stockCounts = Array.isArray(h.stockCounts) ? h.stockCounts : []; // dated snapshots
+  h.shoppingExtras = normaliseExtras(h.shoppingExtras); // per-week manual list items
   h.budgets = (h.budgets && typeof h.budgets === 'object') ? h.budgets : {};
   h.weeks = (h.weeks && typeof h.weeks === 'object') ? h.weeks : {};
   // Legacy single monthlyBudget → migrate into the current month if unset.
@@ -509,14 +523,18 @@ function catalogDatalist() {
   return `<datalist id="catalogNames">${state.catalog.map((c) => `<option value="${esc(c.name)}"></option>`).join('')}</datalist>`;
 }
 
-/* Category-scoped datalist for the מלאי "הוסף פריט" combobox — shows the full
-   seeded item list for that category (each option hints its default par level). */
-function catalogAddDatalist(category) {
-  const opts = state.catalog
-    .filter((c) => c.category === category)
-    .map((c) => `<option value="${esc(c.name)}">${c.min > 0 ? 'מינ׳ ' + esc(String(c.min)) + ' ' + esc(KD.UNIT_LABELS_HE[KD.safeUnit(c.unit)]) : ''}</option>`)
-    .join('');
-  return `<datalist id="catalogAddList">${opts}</datalist>`;
+/* One datalist per category, so EVERY מלאי row's name field is a searchable
+   combobox scoped to that category's catalog items (id `catCombo_<category>`).
+   Picking an item auto-fills its unit / category / default par (see the stkName
+   change handler). Free text is still accepted — the datalist only suggests. */
+function categoryComboDatalists() {
+  return KD.CATEGORIES.map((c) => {
+    const opts = state.catalog
+      .filter((x) => x.category === c)
+      .map((x) => `<option value="${esc(x.name)}"></option>`)
+      .join('');
+    return `<datalist id="catCombo_${c}">${opts}</datalist>`;
+  }).join('');
 }
 
 /* A menu ingredient row: name (catalog combobox) | qty | unit | delete.
@@ -617,9 +635,9 @@ function renderStock(house) {
     const below = KD.isBelowMin(item);
     const catOpts = KD.CATEGORIES.map((c) => `<option value="${c}" ${c === item.category ? 'selected' : ''}>${esc(KD.CATEGORY_LABELS_HE[c])}</option>`).join('');
     return `<tr class="${below ? 'below-min' : ''}">
-      <td><input list="catalogNames" value="${esc(item.name)}" placeholder="שם מרכיב" data-act="stkName" data-id="${esc(item.id)}" /></td>
+      <td><input class="stk-name" list="catCombo_${item.category}" value="${esc(item.name)}" placeholder="בחר פריט…" data-act="stkName" data-id="${esc(item.id)}" /></td>
       <td><select data-act="stkCat" data-id="${esc(item.id)}">${catOpts}</select></td>
-      <td><span class="u"><input type="number" min="0" step="${qtyStep(unit)}" value="${item.qty || ''}" data-act="stkQty" data-id="${esc(item.id)}" style="width:74px" />
+      <td><span class="u"><input type="number" min="0" step="${qtyStep(unit)}" value="${item.qty || ''}" placeholder="0" data-act="stkQty" data-id="${esc(item.id)}" style="width:74px" title="כמות במלאי" />
         <select data-act="stkUnit" data-id="${esc(item.id)}">${unitOptions(unit)}</select></span></td>
       <td><input type="number" min="0" step="${qtyStep(unit)}" value="${item.minQty || ''}" placeholder="—" data-act="stkMin" data-id="${esc(item.id)}" style="width:70px" title="מלאי מינימום"${below ? ' class="over"' : ''} /></td>
       <td><button class="danger" data-act="stkDel" data-id="${esc(item.id)}">מחק</button></td>
@@ -630,18 +648,18 @@ function renderStock(house) {
   const countHistory = (house.stockCounts || []).slice().sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 6);
 
   return `<div class="card">
-    ${catalogDatalist()}
+    ${categoryComboDatalists()}
     <div class="row between">
       <h2 style="margin:0">מלאי — ${esc(house.name)}</h2>
       <button class="primary" data-act="countStart">📋 ספירת מלאי</button>
     </div>
     <p class="muted">מה קיים במחסן כרגע. נחסר מרשימת הקניות ומהצפי; פריט מתחת ל<strong>מלאי מינימום</strong> מסומן באדום.
+      <br>שם הפריט הוא <strong>רשימה נפתחת</strong> — בחרו פריט מהקטלוג והיחידה, הקטגוריה ומלאי המינימום ימולאו אוטומטית.
       ${last ? `<br>ספירה אחרונה: <strong>${esc(KD.formatDateHe(last.date))}</strong>` : ''}</p>
     <div class="subtabs">${tabs}</div>
     <table><thead><tr><th>מרכיב</th><th>קטגוריה</th><th>כמות במלאי</th><th>מלאי מינימום</th><th></th></tr></thead><tbody>${rows}</tbody></table>
     <div class="stock-add">
-      <input list="catalogAddList" id="stkAddName" placeholder="בחר או הקלד פריט ל${esc(KD.CATEGORY_LABELS_HE[active])}…" />
-      ${catalogAddDatalist(active)}
+      <input id="stkAddName" placeholder="פריט חדש שלא ברשימה…" title="פריט חופשי שאינו בקטלוג — יתווסף לקטלוג" />
       <button class="add-row" data-act="stkAdd" data-cat="${active}">＋ הוסף</button>
     </div>
     ${countHistory.length ? `<details class="count-history"><summary class="muted">היסטוריית ספירות (${countHistory.length})</summary>
@@ -650,25 +668,32 @@ function renderStock(house) {
   </div>`;
 }
 
-/* Stock-count mode: every quantity editable in one pass, across all categories,
-   dated, saved atomically ("שמור ספירה") — overwrites stock AND stores a
-   snapshot. Transient edits live in state.countValues until saved. */
+/* Stock-count mode: the FULL catalog (every seeded + user item), grouped by
+   category, each with its unit and a quantity input defaulting to the current
+   stock qty (0 when not in stock yet). One pass, dated, saved atomically
+   ("שמור ספירה") — writes ALL counted items into stock (items counted >0 that
+   weren't in stock get added) AND stores a snapshot. The count is the full
+   summary of what exists in the pantry. Transient edits live in
+   state.countValues (keyed by catalog/name key) until saved. */
 function renderStockCount(house) {
   const date = state.countDate || KD.toISODate(new Date());
   state.countDate = date;
+  const allRows = KD.stockCountRows(state.catalog, house.stock);
   const sections = KD.CATEGORIES.map((c) => {
-    const items = house.stock.filter((s) => s.category === c);
-    if (!items.length) return '';
-    const rows = items.map((item) => {
-      const unit = KD.safeUnit(item.unit);
-      const val = state.countValues[item.id] != null ? state.countValues[item.id] : item.qty;
+    const list = allRows.filter((r) => r.category === c);
+    if (!list.length) return '';
+    const rows = list.map((r) => {
+      const unit = KD.safeUnit(r.unit);
+      const edited = Object.prototype.hasOwnProperty.call(state.countValues, r.key);
+      const val = edited ? state.countValues[r.key] : r.qty;
+      const inStock = r.id != null;
       return `<tr>
-        <td>${esc(item.name)}</td>
+        <td>${esc(r.name)}${inStock ? '' : ' <span class="tag muted" title="עדיין לא במלאי">חדש</span>'}</td>
         <td class="muted">${esc(KD.UNIT_LABELS_HE[unit])}</td>
-        <td><input type="number" min="0" step="${qtyStep(unit)}" value="${val || ''}" placeholder="0" data-act="countQty" data-id="${esc(item.id)}" style="width:90px" /></td>
+        <td><input type="number" min="0" step="${qtyStep(unit)}" value="${val || ''}" placeholder="0" data-act="countQty" data-key="${esc(r.key)}" style="width:90px" /></td>
       </tr>`;
     }).join('');
-    return `<h3 class="count-cat"><span class="cat-dot cat-${c}" aria-hidden="true"></span>${esc(KD.CATEGORY_LABELS_HE[c])}</h3>
+    return `<h3 class="count-cat"><span class="cat-dot cat-${c}" aria-hidden="true"></span>${esc(KD.CATEGORY_LABELS_HE[c])} <span class="muted">(${list.length})</span></h3>
       <table><tbody>${rows}</tbody></table>`;
   }).join('');
 
@@ -677,8 +702,8 @@ function renderStockCount(house) {
       <h2 style="margin:0">ספירת מלאי — ${esc(house.name)}</h2>
       <label class="muted">תאריך: <input type="date" value="${esc(date)}" data-act="countDate" /></label>
     </div>
-    <p class="muted">עדכנו את כל הכמויות בפעם אחת. השמירה תעדכן את המלאי ותשמור צילום מצב בתאריך זה.</p>
-    ${house.stock.length ? sections : '<p class="muted">אין פריטים במלאי. הוסיפו פריטים תחילה.</p>'}
+    <p class="muted">ספירה מלאה של כל פריטי הקטלוג (${allRows.length}) לפי קטגוריה. עדכנו כמות לכל פריט: פריט שנספר ואינו במלאי — יתווסף; פריט שיישאר 0 יהיה 0. השמירה מעדכנת את המלאי ושומרת צילום מצב בתאריך זה.</p>
+    ${allRows.length ? sections : '<p class="muted">אין פריטים בקטלוג. הוסיפו פריטים תחילה.</p>'}
     <div class="row" style="margin-top:.8rem">
       <button class="primary" data-act="countSave">✓ שמור ספירה</button>
       <button class="ghost" data-act="countCancel">ביטול</button>
@@ -782,8 +807,10 @@ function renderShopping(house) {
       ${alg.length ? `<div class="print-alg">⚠️ אלרגיות: ${alg.map((a) => esc(a.name) + ' ×' + (Number(a.count) || 0)).join(', ')}</div>` : ''}
     </div>`;
 
+  const extras = (house.shoppingExtras && house.shoppingExtras[weekOf]) || [];
   const nothing = list.lines.every((l) => l.toBuyQty === 0);
   return `${allergyBanner(house)}
+    ${catalogDatalist()}
     <div class="screen-head shop-head no-print">
       <div class="screen-title"><h2>רשימת קניות</h2>
         <span class="muted">שבוע ${esc(KD.formatDateHe(weekOf))} · כולל תוספת ${pct}% · בניכוי מלאי</span></div>
@@ -793,9 +820,33 @@ function renderShopping(house) {
       </div>
     </div>
     ${printHead}
-    ${nothing
-      ? emptyState('🎉', 'אין מה לקנות', 'המלאי מכסה את כל הצרכים של השבוע.')
-      : sections}`;
+    ${nothing && !extras.length
+      ? emptyState('🎉', 'אין מה לקנות', 'המלאי מכסה את כל הצרכים — ניתן להוסיף פריטים ידנית למטה.')
+      : sections}
+    ${renderShoppingExtras(extras)}`;
+}
+
+/* "פריטים נוספים" — free items the cook adds to THIS week's list on top of the
+   computed shortfall. Combobox (catalog) or free text + qty + unit; removable;
+   persisted per week and included in the printed / shared list. The add row is
+   no-print; the items themselves print. */
+function renderShoppingExtras(extras) {
+  const items = extras.map((e) => `<li class="shop-item extra-item">
+      <span class="shop-body"><span class="shop-name">${esc(e.name)}</span></span>
+      <span class="shop-qty num">${fmtQty(e.qty, e.unit)}</span>
+      <button class="icon-btn danger no-print" title="הסר פריט" data-act="extraDel" data-id="${esc(e.id)}">✕</button>
+    </li>`).join('');
+  return `<section class="card shop-cat shop-extras">
+    <h3 class="shop-cat-head"><span class="cat-dot cat-extra" aria-hidden="true"></span>פריטים נוספים
+      ${extras.length ? `<span class="count-badge">${extras.length}</span>` : ''}</h3>
+    ${extras.length ? `<ul class="shop-list">${items}</ul>` : '<p class="muted no-print" style="margin:.2rem 0 .6rem">הוסיפו פריטים שאינם נגזרים מהתפריט/מלאי (למשל חד־פעמי, ניקיון).</p>'}
+    <div class="extra-add no-print">
+      <input id="extraName" list="catalogNames" placeholder="פריט (מהקטלוג או חופשי)…" />
+      <input type="number" id="extraQty" min="0" step="0.01" placeholder="0" style="width:80px" title="כמות" />
+      <select id="extraUnit" title="יחידה">${unitOptions('unit')}</select>
+      <button class="add-row" data-act="extraAdd">＋ הוסף</button>
+    </div>
+  </section>`;
 }
 
 function shoppingListText(house) {
@@ -815,6 +866,13 @@ function shoppingListText(house) {
     any = true;
     lines.push('*' + KD.CATEGORY_LABELS_HE[c] + '*');
     for (const r of rows) lines.push('• ' + r.name + ': ' + fmtQty(r.toBuyQty, r.unit));
+    lines.push('');
+  }
+  const extras = (house.shoppingExtras && house.shoppingExtras[weekOf]) || [];
+  if (extras.length) {
+    any = true;
+    lines.push('*פריטים נוספים*');
+    for (const e of extras) lines.push('• ' + e.name + ': ' + fmtQty(e.qty, e.unit));
     lines.push('');
   }
   if (!any) lines.push('אין מה לקנות – המלאי מכסה את הצרכים 🎉');
@@ -970,7 +1028,7 @@ function onInput(e) {
     case 'stkName': { const s = house.stock.find((x) => x.id === t.dataset.id); if (s) { s.name = t.value; persist.stock(house); } break; }
     case 'stkQty': { const s = house.stock.find((x) => x.id === t.dataset.id); if (s) { s.qty = clampNum(t.value); toggleBelowMin(t, s); persist.stock(house); } break; }
     case 'stkMin': { const s = house.stock.find((x) => x.id === t.dataset.id); if (s) { s.minQty = clampNum(t.value); toggleBelowMin(t, s); persist.stock(house); } break; }
-    case 'countQty': state.countValues[t.dataset.id] = clampNum(t.value); break;
+    case 'countQty': state.countValues[t.dataset.key] = clampNum(t.value); break;
     case 'budgetAmount': {
       const b = budgetForMonth(house, state.currentMonth);
       b.budget = KD.parseMoney(t.value);
@@ -1035,7 +1093,26 @@ function onChange(e) {
     }
   } else if (act === 'stkName') {
     const s = house.stock.find((x) => x.id === t.dataset.id);
-    if (s && s.name.trim()) catalogAdd([{ name: s.name, unit: s.unit, category: s.category }]);
+    if (!s) return;
+    const name = String(s.name || '').trim();
+    if (!name) return;
+    const hit = KD.catalogLookup(state.catalog, name);
+    if (hit) {
+      // Picking a catalog item auto-fills its unit, category and default par
+      // (מלאי מינימום). A par the cook already set is kept (only a blank one is
+      // filled), so re-selecting the same item never clobbers a custom level.
+      const movedCat = KD.isCategory(hit.category) && hit.category !== s.category;
+      if (KD.isCategory(hit.category)) s.category = hit.category;
+      s.unit = KD.safeUnit(hit.unit);
+      if (!(s.minQty > 0) && Number(hit.min) > 0) s.minQty = Number(hit.min);
+      if (movedCat) state.stockCat = s.category; // follow the item to its tab
+      persist.stock(house);
+      render();
+    } else {
+      // Free text — register the new name into the shared catalog.
+      catalogAdd([{ name, unit: s.unit, category: s.category }]);
+      persist.stock(house);
+    }
   } else if (act === 'stkCat') {
     const s = house.stock.find((x) => x.id === t.dataset.id); if (s) { s.category = KD.isCategory(t.value) ? t.value : 'groceries'; persist.stock(house); render(); }
   } else if (act === 'stkUnit') {
@@ -1120,6 +1197,16 @@ async function onClick(e) {
     }
     case 'purDel': house.purchases = house.purchases.filter((p) => p.id !== d.id); persist.purchases(house); render(); break;
 
+    case 'extraAdd': addShoppingExtra(house); break;
+    case 'extraDel': {
+      const wk = state.currentWeekOf;
+      if (house.shoppingExtras && Array.isArray(house.shoppingExtras[wk])) {
+        house.shoppingExtras[wk] = house.shoppingExtras[wk].filter((e) => e.id !== d.id);
+        persist.shoppingExtras(house, wk); render();
+      }
+      break;
+    }
+
     case 'waShare': window.open('https://wa.me/?text=' + encodeURIComponent(shoppingListText(house)), '_blank'); break;
     case 'printList': window.print(); break;
     case 'openHouse': state.activeHouseId = d.id; state.tab = 'menu'; render(); break;
@@ -1164,9 +1251,9 @@ function serveDay(house, day) {
    next render from the new numbers. */
 function saveStockCount(house) {
   const date = state.countDate || KD.toISODate(new Date());
-  house.stock.forEach((s) => {
-    if (state.countValues[s.id] != null) s.qty = state.countValues[s.id];
-  });
+  // The count is authoritative: rebuild the whole pantry from the counted rows
+  // (adds items counted >0 that weren't in stock; keeps existing items at 0).
+  house.stock = KD.applyStockCount(state.catalog, house.stock, state.countValues);
   const count = KD.makeStockCount(date, house.stock);
   count.id = KD.newId('cnt');
   house.stockCounts = (house.stockCounts || []).filter((c) => c.date !== date).concat(count);
@@ -1196,6 +1283,27 @@ function addStockItem(house, cat) {
   render();
 }
 
+/* Add a free item to the current week's shopping list ("פריטים נוספים"). Name
+   may be a catalog pick or free text; qty + unit as entered. Persisted per week
+   so it survives reloads and prints/shares with the list. */
+function addShoppingExtra(house) {
+  const wk = state.currentWeekOf;
+  const nameEl = $('#extraName');
+  const qtyEl = $('#extraQty');
+  const unitEl = $('#extraUnit');
+  const name = nameEl ? String(nameEl.value || '').trim() : '';
+  if (!name) { setStatus('הזינו שם פריט'); return; }
+  const qty = clampNum(qtyEl ? qtyEl.value : 0);
+  const unit = KD.safeUnit(unitEl ? unitEl.value : 'unit');
+  const hit = KD.catalogLookup(state.catalog, name);
+  const category = hit ? hit.category : 'groceries';
+  const extra = KD.readShoppingExtra({ name, qty, unit, category });
+  if (!house.shoppingExtras) house.shoppingExtras = {};
+  house.shoppingExtras[wk] = (house.shoppingExtras[wk] || []).concat(extra);
+  persist.shoppingExtras(house, wk);
+  render();
+}
+
 /* Restore the pantry to a previously saved dated snapshot. */
 function restoreStockCount(house, date) {
   const c = (house.stockCounts || []).find((x) => x.date === date);
@@ -1210,7 +1318,7 @@ function restoreStockCount(house, date) {
 async function addHouse() {
   const name = window.prompt('שם הבית החדש:');
   if (!name || !name.trim()) return;
-  const house = { id: KD.newId('house'), name: name.trim(), headcount: KD.emptyHeadcount(), allergies: [], stock: [], purchases: [], consumption: [], stockCounts: [], budgets: {}, weeks: {}, monthlyBudget: 0 };
+  const house = { id: KD.newId('house'), name: name.trim(), headcount: KD.emptyHeadcount(), allergies: [], stock: [], purchases: [], consumption: [], stockCounts: [], shoppingExtras: {}, budgets: {}, weeks: {}, monthlyBudget: 0 };
   state.houses.push(house);
   state.activeHouseId = house.id;
   render();
