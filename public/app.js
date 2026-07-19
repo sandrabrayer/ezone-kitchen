@@ -94,6 +94,8 @@ const persist = {
     api('saveStockCount', { houseId: h.id, count })),
   shoppingExtras: (h, weekOf) => scheduleSave('extras:' + h.id + ':' + weekOf, () =>
     api('saveShoppingExtras', { houseId: h.id, weekOf, extras: (h.shoppingExtras && h.shoppingExtras[weekOf]) || [] })),
+  parOverrides: (h) => scheduleSave('par:' + h.id, () =>
+    api('saveParOverrides', { houseId: h.id, overrides: h.parOverrides || {} })),
 };
 
 /* ============================ state ============================ */
@@ -122,6 +124,13 @@ function budgetForMonth(house, month) {
   if (!house.budgets) house.budgets = {};
   if (!house.budgets[month]) house.budgets[month] = { budget: 0, overrun: 0, overrunNote: '' };
   return house.budgets[month];
+}
+
+/* Stock with each item's par replaced by its EFFECTIVE (scaled/override) par —
+   what all shortfall math (קניות, צפי) runs against, so shortfalls follow the
+   house baseline and recompute live when תפוסה changes. */
+function effectiveStock(house) {
+  return KD.withEffectiveMins(house.stock, state.catalog, KD.baseTotal(house.headcount), house.parOverrides || {});
 }
 
 /* Add any names to the shared catalog and persist if it changed. */
@@ -177,6 +186,26 @@ function normaliseExtras(raw) {
   const out = {};
   for (const wk of Object.keys(raw)) {
     if (Array.isArray(raw[wk])) out[wk] = raw[wk].map((e) => KD.readShoppingExtra(e));
+  }
+  return out;
+}
+
+/* Coerce the per-item par/price overrides map { itemKey: { min?, price? } }.
+   Only finite, non-negative numbers are kept; a key with neither is dropped.
+   Prototype-pollution keys (__proto__ etc.) are skipped. */
+function normaliseParOverrides(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out = {};
+  for (const key of Object.keys(raw)) {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+    const v = raw[key];
+    if (!v || typeof v !== 'object') continue;
+    const entry = {};
+    const min = Number(v.min);
+    const price = Number(v.price);
+    if (v.min != null && v.min !== '' && Number.isFinite(min) && min >= 0) entry.min = min;
+    if (v.price != null && v.price !== '' && Number.isFinite(price) && price >= 0) entry.price = price;
+    if ('min' in entry || 'price' in entry) out[key] = entry;
   }
   return out;
 }
@@ -253,6 +282,7 @@ function normaliseHouse(h, catalogSeed) {
   h.consumption = Array.isArray(h.consumption) ? h.consumption : []; // served-day markers
   h.stockCounts = Array.isArray(h.stockCounts) ? h.stockCounts : []; // dated snapshots
   h.shoppingExtras = normaliseExtras(h.shoppingExtras); // per-week manual list items
+  h.parOverrides = normaliseParOverrides(h.parOverrides); // per-item par/price overrides
   h.budgets = (h.budgets && typeof h.budgets === 'object') ? h.budgets : {};
   h.weeks = (h.weeks && typeof h.weeks === 'object') ? h.weeks : {};
   // Legacy single monthlyBudget → migrate into the current month if unset.
@@ -339,6 +369,7 @@ const TABS = [
   { id: 'headcount', icon: '👥', label: 'תפוסה' },
   { id: 'menu', icon: '🗓️', label: 'תפריט' },
   { id: 'stock', icon: '📦', label: 'מלאי' },
+  { id: 'baseline', icon: '🧮', label: 'כמויות בסיס' },
   { id: 'plan', icon: '📊', label: 'צפי' },
   { id: 'shopping', icon: '🛒', label: 'קניות' },
   { id: 'budget', icon: '💰', label: 'תקציב' },
@@ -383,7 +414,7 @@ function render() {
       'הוסיפו בית עם הכפתור ＋ שליד מתגי הבתים כדי להתחיל.');
     return;
   }
-  const map = { menu: renderMenu, headcount: renderHeadcount, stock: renderStock, plan: renderPlan, shopping: renderShopping, budget: renderBudget };
+  const map = { menu: renderMenu, headcount: renderHeadcount, stock: renderStock, baseline: renderBaseline, plan: renderPlan, shopping: renderShopping, budget: renderBudget };
   const fn = map[state.tab] || renderMenu;
   screen.innerHTML = fn(house);
 }
@@ -547,6 +578,54 @@ function qtyStep(unit) {
   return (unit === 'g' || unit === 'ml' || unit === 'unit') ? '1' : '0.01';
 }
 
+/* ---------------------- mobile quantity picker ---------------------- */
+/* Tapping a qty field (count + stock) opens a sheet of common values for its
+   unit; picking one fills the field (and fires `input` so the normal handlers
+   run). Free typing is still allowed via the field itself / "הקלד ידנית". */
+function qtyRange(a, b, step) {
+  const out = [];
+  for (let v = a; v <= b + 1e-9; v += step) out.push(Math.round(v * 1000) / 1000);
+  return out;
+}
+const QTY_PRESETS = {
+  unit: qtyRange(0, 30, 1).concat([40, 50, 60, 80, 100, 120, 150, 200]),
+  kg: qtyRange(0, 10, 0.5).concat([12, 15, 20, 25, 30]),
+  g: [0, 100, 200, 300, 500, 750, 1000, 1500, 2000, 3000, 5000],
+  l: qtyRange(0, 10, 0.5).concat([12, 15, 20]),
+  ml: [0, 100, 250, 500, 750, 1000, 1500, 2000],
+};
+
+function closeQtyPicker() {
+  const ex = document.querySelector('.qty-picker-overlay');
+  if (ex) ex.remove();
+}
+
+function openQtyPicker(input) {
+  closeQtyPicker();
+  const u = KD.safeUnit(input.dataset.picker);
+  const presets = QTY_PRESETS[u] || QTY_PRESETS.unit;
+  const cur = String(input.value || '');
+  const overlay = document.createElement('div');
+  overlay.className = 'qty-picker-overlay';
+  overlay.innerHTML = `<div class="qty-picker" role="dialog" aria-label="בחירת כמות">
+      <div class="qty-picker-head"><span>בחר כמות · ${esc(KD.UNIT_LABELS_HE[u])}</span>
+        <button class="icon-btn" data-picker-close aria-label="סגור">✕</button></div>
+      <div class="qty-picker-grid">${presets.map((v) => `<button class="qty-chip${String(v) === cur ? ' on' : ''}" data-picker-val="${v}">${v}</button>`).join('')}</div>
+      <div class="qty-picker-foot"><button class="ghost" data-picker-type>⌨️ הקלד ידנית</button></div>
+    </div>`;
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay || e.target.closest('[data-picker-close]')) { closeQtyPicker(); return; }
+    if (e.target.closest('[data-picker-type]')) { closeQtyPicker(); input.focus(); return; }
+    const chip = e.target.closest('[data-picker-val]');
+    if (chip) {
+      input.value = chip.dataset.pickerVal;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      closeQtyPicker();
+    }
+  });
+  document.body.appendChild(overlay);
+}
+
 /* Shared datalist of catalog item names — referenced by every name field
    (menu ingredients + pantry items) so each is a searchable combobox that still
    accepts free text. */
@@ -661,16 +740,19 @@ function renderStock(house) {
   const tabs = KD.CATEGORIES.map((c) =>
     `<button data-act="stockCat" data-cat="${c}" aria-current="${active === c}"><span class="cat-dot cat-${c}" aria-hidden="true"></span>${esc(KD.CATEGORY_LABELS_HE[c])}</button>`).join('');
   const items = house.stock.filter((s) => s.category === active);
-  const rows = items.length ? items.map((item) => {
+  const baseTotal = KD.baseTotal(house.headcount);
+  const effItems = KD.withEffectiveMins(items, state.catalog, baseTotal, house.parOverrides || {}); // parallel to items
+  const rows = items.length ? items.map((item, i) => {
     const unit = KD.safeUnit(item.unit);
-    const below = KD.isBelowMin(item);
+    const effMin = (effItems[i] && effItems[i].minQty) || 0;
+    const below = effMin > 0 && (Number(item.qty) || 0) < effMin;
     const catOpts = KD.CATEGORIES.map((c) => `<option value="${c}" ${c === item.category ? 'selected' : ''}>${esc(KD.CATEGORY_LABELS_HE[c])}</option>`).join('');
     return `<tr class="${below ? 'below-min' : ''}">
       <td><input class="stk-name" list="catCombo_${item.category}" value="${esc(item.name)}" placeholder="בחר פריט…" data-act="stkName" data-id="${esc(item.id)}" /></td>
       <td><select data-act="stkCat" data-id="${esc(item.id)}">${catOpts}</select></td>
-      <td><span class="u"><input type="number" min="0" step="${qtyStep(unit)}" value="${item.qty || ''}" placeholder="0" data-act="stkQty" data-id="${esc(item.id)}" style="width:74px" title="כמות במלאי" />
+      <td><span class="u"><input type="number" inputmode="decimal" min="0" step="${qtyStep(unit)}" value="${item.qty || ''}" placeholder="0" data-act="stkQty" data-id="${esc(item.id)}" data-picker="${unit}" style="width:74px" title="כמות במלאי" />
         <select data-act="stkUnit" data-id="${esc(item.id)}">${unitOptions(unit)}</select></span></td>
-      <td><input type="number" min="0" step="${qtyStep(unit)}" value="${item.minQty || ''}" placeholder="—" data-act="stkMin" data-id="${esc(item.id)}" style="width:70px" title="מלאי מינימום"${below ? ' class="over"' : ''} /></td>
+      <td class="num muted stk-min${below ? ' over' : ''}" title="מחושב לפי הכמויות הבסיסיות">${effMin > 0 ? fmtQty(effMin, unit) : '—'}</td>
       <td><button class="danger" data-act="stkDel" data-id="${esc(item.id)}">מחק</button></td>
     </tr>`;
   }).join('') : `<tr><td colspan="5" class="muted">אין פריטים בקטגוריה זו.</td></tr>`;
@@ -686,10 +768,10 @@ function renderStock(house) {
       <button class="primary" data-act="countStart">📋 ספירת מלאי</button>
     </div>
     <p class="muted">מה קיים במחסן כרגע. נחסר מרשימת הקניות ומהצפי; פריט מתחת ל<strong>מלאי מינימום</strong> מסומן באדום.
-      <br>שם הפריט הוא <strong>רשימה נפתחת</strong> — בחרו פריט מהקטלוג והיחידה, הקטגוריה ומלאי המינימום ימולאו אוטומטית.
+      <br>מלאי המינימום <strong>מחושב</strong> לפי הכמויות הבסיסיות (מותאם לתפוסת הבית) — לעריכה עברו ללשונית «כמויות בסיס».
       ${last ? `<br>ספירה אחרונה: <strong>${esc(KD.formatDateHe(last.date))}</strong>` : ''}</p>
     <div class="subtabs">${tabs}</div>
-    <table><thead><tr><th>מרכיב</th><th>קטגוריה</th><th>כמות במלאי</th><th>מלאי מינימום</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+    <table><thead><tr><th>מרכיב</th><th>קטגוריה</th><th>כמות במלאי</th><th>מינימום (מחושב)</th><th></th></tr></thead><tbody>${rows}</tbody></table>
     <div class="stock-add">
       <input id="stkAddName" placeholder="פריט חדש שלא ברשימה…" title="פריט חופשי שאינו בקטלוג — יתווסף לקטלוג" />
       <button class="add-row" data-act="stkAdd" data-cat="${active}">＋ הוסף</button>
@@ -711,6 +793,7 @@ function renderStockCount(house) {
   const date = state.countDate || KD.toISODate(new Date());
   state.countDate = date;
   const allRows = KD.stockCountRows(state.catalog, house.stock);
+  const baseTotal = KD.baseTotal(house.headcount);
   const sections = KD.CATEGORIES.map((c) => {
     const list = allRows.filter((r) => r.category === c);
     if (!list.length) return '';
@@ -718,10 +801,12 @@ function renderStockCount(house) {
       const unit = KD.safeUnit(r.unit);
       const edited = Object.prototype.hasOwnProperty.call(state.countValues, r.key);
       const val = edited ? state.countValues[r.key] : r.qty;
+      const eff = KD.effectiveParFor(state.catalog, r.name, baseTotal, house.parOverrides || {});
+      const minRef = eff.qty > 0 ? `<span class="count-min muted" title="מלאי מינימום מחושב">מינימום: ${fmtQty(eff.qty, eff.unit)}</span>` : '';
       return `<tr>
-        <td>${esc(r.name)}</td>
+        <td>${esc(r.name)}${minRef}</td>
         <td class="muted">${esc(KD.UNIT_LABELS_HE[unit])}</td>
-        <td><input type="number" min="0" step="${qtyStep(unit)}" value="${val || ''}" placeholder="0" data-act="countQty" data-key="${esc(r.key)}" style="width:90px" /></td>
+        <td><input type="number" inputmode="decimal" min="0" step="${qtyStep(unit)}" value="${val || ''}" placeholder="0" data-act="countQty" data-key="${esc(r.key)}" data-picker="${unit}" style="width:90px" /></td>
       </tr>`;
     }).join('');
     return `<h3 class="count-cat"><span class="cat-dot cat-${c}" aria-hidden="true"></span>${esc(KD.CATEGORY_LABELS_HE[c])} <span class="muted">(${list.length})</span></h3>
@@ -743,6 +828,111 @@ function renderStockCount(house) {
   </div>`;
 }
 
+/* ---------------------- כמויות בסיס (budget baseline) ---------------------- */
+/* The house's MONTHLY baseline: for every catalog item, the scaled weekly par,
+   its monthly quantity (×4), the estimated price and the monthly cost. The grand
+   total is the budget baseline. Qty + price are editable inline; edits save as
+   per-item overrides (highlighted) and never rescale. */
+function renderBaseline(house) {
+  const people = KD.baseTotal(house.headcount);
+  const b = KD.baselineForHouse(state.catalog, people, house.parOverrides || {});
+
+  const sections = KD.CATEGORIES.map((c) => {
+    const rows = b.rows.filter((r) => r.category === c);
+    if (!rows.length) return '';
+    const trs = rows.map((r) => {
+      const manual = r.minSource === 'manual' || r.priceSource === 'manual';
+      return `<tr class="${manual ? 'par-manual' : ''}" data-cat="${r.category}">
+        <td>${esc(r.name)}</td>
+        <td class="muted">${esc(KD.UNIT_LABELS_HE[r.unit])}</td>
+        <td><input type="number" inputmode="decimal" min="0" step="${qtyStep(r.unit)}" value="${r.weekQty || ''}" placeholder="0" data-act="parMin" data-key="${esc(r.key)}" class="par-qty${r.minSource === 'manual' ? ' manual' : ''}" style="width:76px" /></td>
+        <td class="num muted par-month">${fmtQty(r.monthQty, r.unit)}</td>
+        <td><span class="money-in">₪<input type="number" inputmode="decimal" min="0" step="0.01" value="${r.price || ''}" placeholder="0" data-act="parPrice" data-key="${esc(r.key)}" class="par-price${r.priceSource === 'manual' ? ' manual' : ''}" style="width:70px" /></span></td>
+        <td class="num par-cost">${fmtCurrency(r.monthlyCost)}</td>
+        <td class="muted par-src">${manual ? 'ידני' : 'ברירת מחדל'}</td>
+      </tr>`;
+    }).join('');
+    return `<h3 class="count-cat"><span class="cat-dot cat-${c}" aria-hidden="true"></span>${esc(KD.CATEGORY_LABELS_HE[c])}</h3>
+      <div class="table-scroll"><table class="baseline-table">
+        <thead><tr><th>פריט</th><th>יחידה</th><th>כמות לשבוע</th><th>לחודש (×4)</th><th>מחיר משוער</th><th>עלות חודשית</th><th>מקור</th></tr></thead>
+        <tbody>${trs}</tbody></table></div>`;
+  }).join('');
+
+  return `<div class="card">
+    ${flowHint(2)}
+    <div class="print-only print-head"><h1>כמויות בסיס — ${esc(house.name)}</h1><div>מחושב עבור ${people} אנשים (ייחוס: ${KD.BASE_PEOPLE})</div></div>
+    <div class="baseline-head">
+      <div class="screen-title">
+        <h2 class="baseline-title">הכמות הבסיסית לבית לחודש — קובעת את התקציב</h2>
+        <span class="muted">מחושב עבור <strong>${people}</strong> אנשים (ייחוס: ${KD.BASE_PEOPLE}). ערכי ברירת המחדל ניתנים לעריכה — עריכה נשמרת כערך <strong>ידני</strong> ומודגשת.</span>
+      </div>
+      <div class="head-actions no-print">
+        <button data-act="printBaseline">🖨️ הדפס</button>
+        <button class="primary" data-act="baselineShare">📱 שיתוף</button>
+      </div>
+    </div>
+    ${b.rows.length ? sections : emptyState('🧮', 'אין פריטים בקטלוג', 'הוסיפו פריטים למלאי כדי לבנות בסיס.')}
+    <div class="baseline-total">
+      <span>סה"כ עלות חודשית משוערת</span>
+      <strong id="baselineTotal">${fmtCurrency(b.total)}</strong>
+    </div>
+    <p class="muted baseline-note">זהו בסיס התקציב החודשי לבית. אפשר לאמץ אותו בלשונית «תקציב».</p>
+  </div>`;
+}
+
+/* Live-update a baseline row + the grand total after an inline qty/price edit,
+   without a full re-render (keeps the input focused while typing). */
+function updateBaselineRowLive(house, inputEl, key) {
+  const people = KD.baseTotal(house.headcount);
+  const b = KD.baselineForHouse(state.catalog, people, house.parOverrides || {});
+  const totalEl = document.getElementById('baselineTotal');
+  if (totalEl) totalEl.textContent = fmtCurrency(b.total);
+  const r = b.rows.find((x) => x.key === key);
+  const tr = inputEl.closest('tr');
+  if (!r || !tr) return;
+  const set = (sel, txt) => { const el = tr.querySelector(sel); if (el) el.textContent = txt; };
+  set('.par-month', fmtQty(r.monthQty, r.unit));
+  set('.par-cost', fmtCurrency(r.monthlyCost));
+  set('.par-src', (r.minSource === 'manual' || r.priceSource === 'manual') ? 'ידני' : 'ברירת מחדל');
+  const minI = tr.querySelector('input[data-act="parMin"]');
+  const priceI = tr.querySelector('input[data-act="parPrice"]');
+  if (minI) minI.classList.toggle('manual', r.minSource === 'manual');
+  if (priceI) priceI.classList.toggle('manual', r.priceSource === 'manual');
+  tr.classList.toggle('par-manual', r.minSource === 'manual' || r.priceSource === 'manual');
+}
+
+/* Set or clear a per-item par/price override, then persist. */
+function setParOverride(house, key, field, rawValue) {
+  if (key === '__proto__' || key === 'constructor' || key === 'prototype') return;
+  if (!house.parOverrides) house.parOverrides = {};
+  const ov = Object.assign({}, house.parOverrides[key]);
+  if (rawValue === '' || rawValue == null) {
+    delete ov[field];
+  } else {
+    const n = parseFloat(rawValue);
+    ov[field] = Number.isFinite(n) && n >= 0 ? n : 0;
+  }
+  if ('min' in ov || 'price' in ov) house.parOverrides[key] = ov;
+  else delete house.parOverrides[key];
+  persist.parOverrides(house);
+}
+
+/* WhatsApp/plain text of the monthly baseline (shared/printed summary). */
+function baselineText(house) {
+  const people = KD.baseTotal(house.headcount);
+  const b = KD.baselineForHouse(state.catalog, people, house.parOverrides || {});
+  const lines = ['🧮 כמויות בסיס לחודש – ' + house.name, 'מחושב עבור ' + people + ' אנשים (ייחוס ' + KD.BASE_PEOPLE + ')', ''];
+  for (const c of KD.CATEGORIES) {
+    const rows = b.rows.filter((r) => r.category === c && r.monthlyCost > 0);
+    if (!rows.length) continue;
+    lines.push('*' + KD.CATEGORY_LABELS_HE[c] + '*');
+    for (const r of rows) lines.push('• ' + r.name + ': ' + fmtQty(r.monthQty, r.unit) + ' — ' + fmtCurrency(r.monthlyCost));
+    lines.push('');
+  }
+  lines.push('סה"כ חודשי משוער: ' + fmtCurrency(b.total));
+  return lines.join('\n').trim();
+}
+
 /* ------------------------ Weekly plan view ------------------------ */
 /* צפי — "השוואת תפריט מול מלאי". Two explanatory sections (KD.weeklyPlan):
      • the menu comparison: every ingredient the week's menu needs vs stock;
@@ -757,7 +947,7 @@ function renderPlan(house) {
   const daysRemaining = 7 - todayIdx;   // days left in the week, including today
   const fromToday = state.planFromToday;
   const days = fromToday ? KD.DAYS.slice(todayIdx) : KD.DAYS;
-  const plan = KD.weeklyPlan(week, house.stock, days);
+  const plan = KD.weeklyPlan(week, effectiveStock(house), days);
   const needLabel = fromToday ? 'נדרש (מהיום)' : 'נדרש לשבוע';
 
   const menuRows = plan.menu.map((line) => {
@@ -815,7 +1005,7 @@ function renderPlan(house) {
 function renderShopping(house) {
   const weekOf = state.currentWeekOf;
   const week = (house.weeks && house.weeks[weekOf]) || KD.emptyWeekMenu(weekOf);
-  const list = KD.buildShoppingList(week, house.stock);
+  const list = KD.buildShoppingList(week, effectiveStock(house));
   const pct = Math.round(list.bufferRate * 100);
 
   const sections = KD.CATEGORIES.map((c) => {
@@ -896,7 +1086,7 @@ function renderShoppingExtras(extras) {
 function shoppingListText(house) {
   const weekOf = state.currentWeekOf;
   const week = (house.weeks && house.weeks[weekOf]) || KD.emptyWeekMenu(weekOf);
-  const list = KD.buildShoppingList(week, house.stock);
+  const list = KD.buildShoppingList(week, effectiveStock(house));
   const lines = [];
   lines.push('🛒 רשימת קניות – ' + house.name);
   lines.push('שבוע ' + KD.formatDateHe(weekOf));
@@ -938,12 +1128,18 @@ function renderBudget(house) {
       <td class="muted">${esc(KD.formatDateHe(p.date || ''))}</td><td class="num">${fmtCurrency(p.amount)}</td><td>${esc(p.note || '')}</td>
       <td><button class="danger" data-act="purDel" data-id="${esc(p.id)}">מחק</button></td></tr>`).join('') : '';
 
+  const baselineTotal = KD.baselineForHouse(state.catalog, KD.baseTotal(house.headcount), house.parOverrides || {}).total;
+
   return `<div class="card">
       <h2 style="margin:0 0 .3rem">תקציב — ${esc(house.name)}</h2>
       <div class="month-bar">
         <button class="icon-btn" data-act="monthPrev" aria-label="חודש קודם">→</button>
         <strong>${esc(KD.formatMonthHe(month))}</strong>
         <button class="icon-btn" data-act="monthNext" aria-label="חודש הבא">←</button>
+      </div>
+      <div class="baseline-adopt">
+        <span>בסיס מחושב (כמויות בסיס): <strong>${fmtCurrency(baselineTotal)}</strong></span>
+        <button class="ghost" data-act="adoptBaseline" ${baselineTotal > 0 ? '' : 'disabled'} title="העתק את הבסיס המחושב לתקציב החודשי">אמץ כתקציב</button>
       </div>
       <div class="row" style="flex-wrap:wrap;gap:1rem">
         <label class="muted">תקציב חודשי (₪): <input type="text" inputmode="decimal" value="${esc(KD.groupThousands(b.budget))}" data-act="budgetAmount" style="width:120px" /></label>
@@ -966,6 +1162,18 @@ function renderBudget(house) {
       </div>
       ${monthPurchases.length ? `<table style="margin-top:.6rem"><thead><tr><th>תאריך</th><th>סכום</th><th>הערה</th><th></th></tr></thead><tbody>${purchaseRows}</tbody></table>` : '<p class="muted" style="margin-top:.6rem">אין הוצאות רשומות לחודש זה.</p>'}
     </div>`;
+}
+
+/* Copy the computed monthly baseline (from כמויות בסיס) into this month's
+   manual budget field. */
+function adoptBaselineAsBudget(house) {
+  const total = KD.baselineForHouse(state.catalog, KD.baseTotal(house.headcount), house.parOverrides || {}).total;
+  if (!(total > 0)) return;
+  const b = budgetForMonth(house, state.currentMonth);
+  b.budget = total;
+  persist.budget(house, state.currentMonth);
+  render();
+  setStatus('התקציב עודכן לבסיס המחושב ✓');
 }
 
 /* Recompute the four budget tiles in place (no re-render, so the input keeps
@@ -1070,9 +1278,10 @@ function onInput(e) {
     case 'algName': { const a = house.allergies.find((x) => x.id === t.dataset.id); if (a) { a.name = t.value; persist.allergies(house); } break; }
     case 'algCount': { const a = house.allergies.find((x) => x.id === t.dataset.id); if (a) { a.count = clampInt(t.value); persist.allergies(house); } break; }
     case 'stkName': { const s = house.stock.find((x) => x.id === t.dataset.id); if (s) { s.name = t.value; persist.stock(house); } break; }
-    case 'stkQty': { const s = house.stock.find((x) => x.id === t.dataset.id); if (s) { s.qty = clampNum(t.value); toggleBelowMin(t, s); persist.stock(house); } break; }
-    case 'stkMin': { const s = house.stock.find((x) => x.id === t.dataset.id); if (s) { s.minQty = clampNum(t.value); toggleBelowMin(t, s); persist.stock(house); } break; }
+    case 'stkQty': { const s = house.stock.find((x) => x.id === t.dataset.id); if (s) { s.qty = clampNum(t.value); toggleBelowMin(house, t, s); persist.stock(house); } break; }
     case 'countQty': state.countValues[t.dataset.key] = clampNum(t.value); break;
+    case 'parMin': setParOverride(house, t.dataset.key, 'min', t.value); updateBaselineRowLive(house, t, t.dataset.key); break;
+    case 'parPrice': setParOverride(house, t.dataset.key, 'price', t.value); updateBaselineRowLive(house, t, t.dataset.key); break;
     case 'budgetAmount': {
       const b = budgetForMonth(house, state.currentMonth);
       b.budget = KD.parseMoney(t.value);
@@ -1093,10 +1302,17 @@ function onInput(e) {
   }
 }
 
-/* Toggle the below-minimum red row highlight live (no full re-render). */
-function toggleBelowMin(input, item) {
+/* Toggle the below-minimum red highlight live (no full re-render), comparing
+   the on-hand qty to the item's EFFECTIVE (scaled/override) par. */
+function toggleBelowMin(house, input, item) {
+  const eff = KD.withEffectiveMins([item], state.catalog, KD.baseTotal(house.headcount), house.parOverrides || {})[0];
+  const effMin = (eff && eff.minQty) || 0;
+  const below = effMin > 0 && (Number(item.qty) || 0) < effMin;
   const row = input.closest('tr');
-  if (row) row.classList.toggle('below-min', KD.isBelowMin(item));
+  if (!row) return;
+  row.classList.toggle('below-min', below);
+  const mc = row.querySelector('.stk-min');
+  if (mc) mc.classList.toggle('over', below);
 }
 
 /* Reformat a money input with thousands separators while typing, keeping the
@@ -1198,6 +1414,8 @@ async function onClick(e) {
   const house = activeHouse();
 
   if (btn.dataset.tab) { state.tab = btn.dataset.tab; render(); return; }
+  // Tapping a qty field (count + stock) opens the common-values picker.
+  if (btn.tagName === 'INPUT' && btn.dataset.picker) { openQtyPicker(btn); return; }
   const act = btn.dataset.act;
   const d = btn.dataset;
 
@@ -1253,6 +1471,9 @@ async function onClick(e) {
 
     case 'waShare': window.open('https://wa.me/?text=' + encodeURIComponent(shoppingListText(house)), '_blank'); break;
     case 'printList': window.print(); break;
+    case 'printBaseline': window.print(); break;
+    case 'baselineShare': window.open('https://wa.me/?text=' + encodeURIComponent(baselineText(house)), '_blank'); break;
+    case 'adoptBaseline': adoptBaselineAsBudget(house); break;
     case 'openHouse': state.activeHouseId = d.id; state.tab = 'menu'; render(); break;
 
     case 'selHouse': state.activeHouseId = d.id; render(); break;
@@ -1362,7 +1583,7 @@ function restoreStockCount(house, date) {
 async function addHouse() {
   const name = window.prompt('שם הבית החדש:');
   if (!name || !name.trim()) return;
-  const house = { id: KD.newId('house'), name: name.trim(), headcount: KD.emptyHeadcount(), allergies: [], stock: [], purchases: [], consumption: [], stockCounts: [], shoppingExtras: {}, budgets: {}, weeks: {}, monthlyBudget: 0 };
+  const house = { id: KD.newId('house'), name: name.trim(), headcount: KD.emptyHeadcount(), allergies: [], stock: [], purchases: [], consumption: [], stockCounts: [], shoppingExtras: {}, parOverrides: {}, budgets: {}, weeks: {}, monthlyBudget: 0 };
   state.houses.push(house);
   state.activeHouseId = house.id;
   render();

@@ -19,6 +19,7 @@
  *   purchases      id | houseId | weekOf | amount | note | date
  *   consumption    id | houseId | weekOf | day | executedAt (served-day markers)
  *   shoppingExtras id | houseId | weekOf | name | qty | unit | category  (manual list items, per week)
+ *   parOverrides   houseId | overridesJson   (per-item par/price overrides for the budget baseline)
  *
  * Columns are mapped by POSITION (see readRows_), so the header text in an
  * existing Sheet is cosmetic: the `qty` column is what used to be `qtyKg`
@@ -44,7 +45,8 @@ var SHEETS = {
   menus: ['houseId', 'weekOf', 'daysJson'],
   purchases: ['id', 'houseId', 'weekOf', 'amount', 'note', 'date'],
   consumption: ['id', 'houseId', 'weekOf', 'day', 'executedAt'],
-  shoppingExtras: ['id', 'houseId', 'weekOf', 'name', 'qty', 'unit', 'category']
+  shoppingExtras: ['id', 'houseId', 'weekOf', 'name', 'qty', 'unit', 'category'],
+  parOverrides: ['houseId', 'overridesJson']
 };
 
 var CATEGORIES = ['groceries', 'vegetables', 'fruits', 'meat', 'dry'];
@@ -92,6 +94,7 @@ function doPost(e) {
         })); break;
         case 'saveMenu': result = saveMenu_(body.houseId, body.weekOf, body.days); break;
         case 'saveShoppingExtras': result = saveShoppingExtras_(body.houseId, body.weekOf, body.extras); break;
+        case 'saveParOverrides': result = saveParOverrides_(body.houseId, body.overrides); break;
         default: result = { ok: false, error: 'unknown_action:' + action };
       }
     } finally {
@@ -261,6 +264,14 @@ function saveShoppingExtras_(houseId, weekOf, extras) {
   return { ok: true, count: newRows.length };
 }
 
+// Per-item par / price overrides for the budget baseline. One row per house
+// holding a JSON map { itemKey: { min?, price? } }. Upsert by houseId.
+function saveParOverrides_(houseId, overrides) {
+  if (!houseId) return { ok: false, error: 'houseId required' };
+  upsertRow_('parOverrides', ['houseId'], [houseId], [houseId, JSON.stringify(overrides || {})]);
+  return { ok: true };
+}
+
 // Per-month budget + approved overrun. Upsert by (houseId, month).
 function saveBudget_(houseId, month, budget) {
   if (!houseId || !month) return { ok: false, error: 'houseId & month required' };
@@ -304,6 +315,7 @@ function loadAll_() {
   var monthlyBudgets = groupBy_(readRows_('monthlyBudgets'), 'houseId');
   var menus = groupBy_(readRows_('menus'), 'houseId');
   var shoppingExtras = groupBy_(readRows_('shoppingExtras'), 'houseId');
+  var parOverrides = indexBy_(readRows_('parOverrides'), 'houseId');
   var catalog = readRows_('catalog').map(function (c) {
     return { name: String(c.name || ''), unit: unit_(c.unit), category: category_(c.category) };
   }).filter(function (c) { return c.name !== ''; });
@@ -339,6 +351,7 @@ function loadAll_() {
       consumption: (consumption[id] || []).map(function (c) { return { id: String(c.id), weekOf: String(c.weekOf), day: String(c.day), executedAt: String(c.executedAt || '') }; }),
       stockCounts: (stockCounts[id] || []).map(function (c) { return { id: String(c.id), date: String(c.date), items: safeParse_(c.itemsJson, []) }; }),
       shoppingExtras: extras,
+      parOverrides: parOverrides[id] ? safeParse_(parOverrides[id].overridesJson, {}) : {},
       weeks: weeks
     };
   });

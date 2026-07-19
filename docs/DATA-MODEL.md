@@ -14,12 +14,13 @@ into the nested `AppState` the frontend uses.
 | `headcount`        | `houseId`, `basePatients`, `baseStaff`, `overridesJson` | One row per house; overrides stored as JSON. |
 | `allergies`        | `id`, `houseId`, `name`, `count`                    | Many rows per house. |
 | `stock`            | `id`, `houseId`, `name`, `category`, `qty`, `unit`, `min` | Many rows per house. `qty`/`min` are in `unit`. |
-| `catalog`          | `name`, `unit`, `category`                          | **Global** (no houseId) — the shared item catalog. Default par levels (`min`) are **not** stored here; they come from the domain `SEED_CATALOG` and are re-merged on every load. |
+| `catalog`          | `name`, `unit`, `category`                          | **Global** (no houseId) — the shared item catalog. Default par levels (`min`) and estimated unit **prices** (`price`) are **not** stored here; they come from the domain `SEED_CATALOG` and are re-merged on every load. |
 | `stockCounts`      | `id`, `houseId`, `date`, `itemsJson`                | A dated pantry snapshot (ספירת מלאי); upserted by (house, date). |
 | `menus`            | `houseId`, `weekOf`, `daysJson`                     | One row per (house, week); the week's nested days are JSON. |
 | `purchases`        | `id`, `houseId`, `weekOf`, `amount`, `note`, `date` | Actual logged spend (grouped by `date`'s month). |
 | `consumption`      | `id`, `houseId`, `weekOf`, `day`, `executedAt`      | A "served" marker per day — makes the stock deduction idempotent. |
 | `shoppingExtras`   | `id`, `houseId`, `weekOf`, `name`, `qty`, `unit`, `category` | Manual "פריטים נוספים" the cook adds to one week's shopping list; replaced per (house, week). |
+| `parOverrides`     | `houseId`, `overridesJson`                          | Per-item par/price overrides for the budget baseline: JSON `{ itemKey: { min?, price? } }`; one row per house. |
 
 Columns are mapped by **position** (`Code.gs` `readRows_`), so in an existing
 Sheet the `stock.qty` header cell may still literally read `qtyKg` and
@@ -38,7 +39,7 @@ header name, but keeping existing columns in place avoids surprises.
 ```
 load → {
   houses: [ House ],
-  catalog: [ { name, unit, category } ]        // GLOBAL shared item catalog
+  catalog: [ { name, unit, category, min, price } ] // GLOBAL shared item catalog (min/price from the domain seed)
 }
 House {
   id, name,
@@ -51,6 +52,7 @@ House {
   consumption [ { id, weekOf, day, executedAt } ],   // served-day markers (idempotency)
   stockCounts [ { id, date, items: [ StockItem ] } ], // dated snapshots
   shoppingExtras { [weekOf]: [ { id, name, qty, unit, category } ] }, // manual list items, per week
+  parOverrides { [itemKey]: { min?, price? } },  // budget-baseline par/price overrides (absolute, never rescaled)
   weeks       { [weekOf]: { weekOf, days } }   // days = { [day]: { breakfast:[Dish], lunch:[Dish], dinner:[Dish] } }
 }
 Dish       { id, name, ingredients: [ Ingredient ] }

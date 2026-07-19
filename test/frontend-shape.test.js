@@ -26,7 +26,7 @@ test('ingredient name is a catalog combobox; row keeps name/qty/unit/delete only
 });
 
 test('new stock/count/budget/overrun controls are wired', () => {
-  for (const act of ['stkMin', 'countStart', 'countSave', 'countRestore', 'budgetAmount', 'overrunAmount', 'overrunNote']) {
+  for (const act of ['countStart', 'countSave', 'countRestore', 'budgetAmount', 'overrunAmount', 'overrunNote']) {
     assert.ok(app.includes("'" + act + "'") || app.includes('"' + act + '"') || app.includes('data-act="' + act + '"'),
       'missing wiring for ' + act);
   }
@@ -69,6 +69,41 @@ test('shopping-list extras (פריטים נוספים) are wired and persisted p
   assert.match(app, /KD\.readShoppingExtra/, 'extras are normalised via the domain helper');
 });
 
+test('כמויות בסיס baseline tab is a top-level tab with the required structure', () => {
+  assert.match(app, /id: 'baseline'[^]*?label: 'כמויות בסיס'/, 'top-level baseline tab');
+  assert.match(app, /baseline: renderBaseline/, 'baseline tab is routed');
+  assert.match(app, /function renderBaseline/, 'baseline renderer');
+  assert.match(app, /הכמות הבסיסית לבית לחודש — קובעת את התקציב/, 'bold header');
+  assert.match(app, /ייחוס: \$\{KD\.BASE_PEOPLE\}/, 'reference-25 subtitle');
+  assert.match(app, /KD\.baselineForHouse\(state\.catalog/, 'uses the domain baseline');
+  assert.match(app, /סה"כ עלות חודשית משוערת/, 'bottom total summary');
+  for (const act of ['parMin', 'parPrice', 'printBaseline']) {
+    assert.ok(app.includes("'" + act + "'") || app.includes('data-act="' + act + '"'), 'missing wiring for ' + act);
+  }
+  assert.match(app, /saveParOverrides/, 'overrides persist via the backend action');
+});
+
+test('budget tab shows the computed baseline + an אמץ כתקציב button', () => {
+  assert.match(app, /בסיס מחושב/, 'baseline shown in budget tab');
+  assert.match(app, /data-act="adoptBaseline"/, 'adopt button wired');
+  assert.match(app, /function adoptBaselineAsBudget/, 'adopt handler copies baseline into the budget');
+});
+
+test('effective (scaled/override) par drives shortfall + the count reference', () => {
+  assert.match(app, /function effectiveStock/, 'effective-min stock helper');
+  assert.match(app, /KD\.withEffectiveMins/, 'shortfall uses effective mins');
+  assert.match(app, /KD\.effectiveParFor/, 'count/stock show the effective par');
+  assert.match(app, /מינימום: /, 'count screen shows the effective minimum');
+  assert.ok(!/data-act="stkMin"/.test(app), 'the stock min is no longer directly editable (managed in baseline)');
+});
+
+test('mobile qty picker is wired for count + stock qty fields', () => {
+  assert.match(app, /function openQtyPicker/, 'picker opener');
+  assert.match(app, /const QTY_PRESETS/, 'per-unit preset values');
+  assert.match(app, /data-picker="\$\{unit\}"/, 'qty inputs declare their unit for the picker');
+  assert.match(app, /btn\.dataset\.picker/, 'tapping a qty field opens the picker');
+});
+
 test('count is simplified: no "חדש" badge, "count what you have" framing', () => {
   assert.ok(!/>חדש</.test(app), 'the "חדש" badge must be gone from the count');
   assert.match(app, /סִפרו מה שיש|סיפרו מה שיש/, 'count intro reframed as "count what you have"');
@@ -86,7 +121,7 @@ test('the 3-step flow hint is shown on the מלאי / ספירה / קניות ta
 test('the צפי plan tab is reworked: new title/subtitle, split sections, empty message', () => {
   assert.match(app, /צפי שבועי — השוואת תפריט מול מלאי/, 'plan title');
   assert.match(app, /ריכוז כל המרכיבים הנדרשים, מול מה שקיים במלאי/, 'plan subtitle');
-  assert.match(app, /KD\.weeklyPlan\(week, house\.stock, days\)/, 'plan uses the weeklyPlan split');
+  assert.match(app, /KD\.weeklyPlan\(week, effectiveStock\(house\), days\)/, 'plan uses the weeklyPlan split over effective-min stock');
   assert.match(app, /עדיין לא הוזן תפריט לשבוע זה/, 'friendly empty-menu message');
   assert.match(app, /השלמה למלאי מינימום/, 'separate par top-up section');
   // Menu table has exactly the 4 agreed columns (no מינימום column in it).
@@ -117,10 +152,10 @@ test('seed-catalog is resilient: seeded before the per-house loop + at render ti
 
 test('Code.gs declares the new tabs the frontend relies on', () => {
   const gs = fs.readFileSync(path.join(__dirname, '..', 'apps-script', 'Code.gs'), 'utf8');
-  for (const tab of ['catalog', 'stockCounts', 'monthlyBudgets', 'shoppingExtras']) {
+  for (const tab of ['catalog', 'stockCounts', 'monthlyBudgets', 'shoppingExtras', 'parOverrides']) {
     assert.ok(gs.includes(tab + ':'), 'Code.gs missing SHEETS.' + tab);
   }
-  for (const action of ['saveCatalog', 'saveStockCount', 'saveBudget', 'saveShoppingExtras']) {
+  for (const action of ['saveCatalog', 'saveStockCount', 'saveBudget', 'saveShoppingExtras', 'saveParOverrides']) {
     assert.ok(gs.includes("case '" + action + "'"), 'Code.gs missing action ' + action);
   }
   assert.match(gs, /stock:\s*\['id',\s*'houseId',\s*'name',\s*'category',\s*'qty',\s*'unit',\s*'min'\]/, 'stock tab must gain the min column');
