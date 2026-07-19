@@ -101,7 +101,9 @@ test('reset-to-default is wired: per-row (baseline + stock) and bulk', () => {
 
 test('effective (scaled/override) par drives shortfall + the count reference', () => {
   assert.match(app, /function effectiveStock/, 'effective-min stock helper');
-  assert.match(app, /KD\.withEffectiveMins/, 'shortfall uses effective mins');
+  // shortfall must run over the FULL catalog union, not just existing stock rows
+  assert.match(app, /KD\.effectiveCatalogStock\(state\.catalog, house\.stock/, 'shortfall covers the full catalog');
+  assert.match(app, /KD\.withEffectiveMins/, 'per-row stock min uses effective mins');
   assert.match(app, /KD\.effectiveParFor/, 'count/stock show the effective par');
   assert.match(app, /מינימום: /, 'count screen shows the effective minimum');
   assert.ok(!/data-act="stkMin"/.test(app), 'the stock min is no longer directly editable (managed in baseline)');

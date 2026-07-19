@@ -133,6 +133,26 @@ async function main() {
     /* ---- 3-step flow hint on the stock tab ---- */
     ok(!!(await page.$('.flow-hint')), 'the 3-step flow hint is shown on the stock tab');
 
+    /* ---- REGRESSION: par top-up covers the FULL catalog, not just stock rows.
+       Stock here holds only a couple of items; on an empty-menu week every
+       catalog item with a par should appear in "השלמה למלאי מינימום". ---- */
+    await page.click('[data-tab="menu"]');
+    await page.click('[data-act="weekNext"]'); // a week with no menu
+    await page.click('[data-tab="plan"]');
+    await page.waitForSelector('#screen');
+    const parInfo = await page.evaluate(() => {
+      const card = [...document.querySelectorAll('#screen .card')]
+        .find((c) => /השלמה למלאי מינימום/.test(c.textContent));
+      if (!card) return { present: false };
+      const names = [...card.querySelectorAll('tbody tr td:first-child')].map((td) => td.textContent.trim());
+      return { present: true, rows: names.length, hasUnstocked: names.includes('אורז') && names.includes('סוכר') };
+    });
+    ok(parInfo.present, 'the par top-up section renders on an empty-menu week');
+    ok(parInfo.rows > 50, 'par top-up lists the FULL catalog (' + parInfo.rows + ' rows), not just the ~2 stock items');
+    ok(parInfo.hasUnstocked, 'catalog items with a par but NOT in stock (אורז, סוכר) appear with a shortfall');
+    await page.click('[data-tab="menu"]');
+    await page.click('[data-act="weekPrev"]'); // back to the current week
+
     /* ---- SHOPPING: max(menu shortfall 21, par top-up 12) = 21 ---- */
     await page.click('[data-tab="shopping"]');
     await page.waitForSelector('.shop-list, .empty');

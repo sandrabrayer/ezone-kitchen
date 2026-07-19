@@ -130,7 +130,9 @@ function budgetForMonth(house, month) {
    what all shortfall math (קניות, צפי) runs against, so shortfalls follow the
    house baseline and recompute live when תפוסה changes. */
 function effectiveStock(house) {
-  return KD.withEffectiveMins(house.stock, state.catalog, KD.baseTotal(house.headcount), house.parOverrides || {});
+  // Full catalog ∪ stock (unstocked items count as 0) so קניות / צפי top-ups
+  // cover every catalog item with a par, not just items already in stock.
+  return KD.effectiveCatalogStock(state.catalog, house.stock, KD.baseTotal(house.headcount), house.parOverrides || {});
 }
 
 /* Add any names to the shared catalog and persist if it changed. */
