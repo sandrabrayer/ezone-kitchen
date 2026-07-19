@@ -427,6 +427,59 @@ input.over { color: var(--danger); font-weight: 800; }
 .flow-step.on b { background: var(--brand); }
 .flow-arr { color: var(--border-strong); font-weight: 700; }
 
+/* כמויות בסיס — the monthly budget-baseline view */
+.baseline-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.8rem; flex-wrap: wrap; }
+.baseline-title { margin: 0 0 0.2rem; font-size: 1.18rem; line-height: 1.25; }
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.baseline-table { min-width: 560px; }
+.baseline-table th, .baseline-table td { white-space: nowrap; }
+.baseline-table input.par-qty, .baseline-table input.par-price { text-align: center; }
+.money-in { display: inline-flex; align-items: center; gap: 0.15rem; }
+.money-in input { width: 70px; }
+input.manual { border-color: var(--brand); background: var(--brand-tint); font-weight: 700; }
+tr.par-manual td { background: color-mix(in srgb, var(--brand) 7%, transparent); }
+.par-src { font-size: 0.78rem; }
+.baseline-total {
+  display: flex; justify-content: space-between; align-items: center; gap: 1rem;
+  margin-top: 1rem; padding: 0.9rem 1rem; border-radius: var(--radius-sm);
+  background: var(--brand-tint); border: 1.5px solid var(--brand);
+}
+.baseline-total span { font-weight: 700; }
+.baseline-total strong { font-size: 1.5rem; font-weight: 900; color: var(--brand-strong); }
+.baseline-note { margin-top: 0.5rem; }
+.baseline-adopt {
+  display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap;
+  margin: 0.5rem 0 0.2rem; padding: 0.5rem 0.7rem;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.baseline-adopt strong { color: var(--brand-strong); }
+.baseline-adopt button { width: auto; min-height: 40px; padding: 0.35rem 0.9rem; }
+
+/* the computed מינימום cell on the stock tab + the count-screen reference */
+td.stk-min { font-size: 0.85rem; }
+td.stk-min.over { color: var(--danger); font-weight: 800; }
+.count-min { display: inline-block; margin-inline-start: 0.5rem; font-size: 0.75rem; }
+
+/* mobile quantity picker (bottom sheet) */
+.qty-picker-overlay {
+  position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.4);
+  display: flex; align-items: flex-end; justify-content: center;
+}
+.qty-picker {
+  width: 100%; max-width: 520px; max-height: 70vh; overflow-y: auto;
+  background: var(--surface); border-radius: 16px 16px 0 0;
+  box-shadow: var(--shadow); padding: 0.8rem 0.9rem calc(0.9rem + env(safe-area-inset-bottom, 0px));
+}
+.qty-picker-head { display: flex; justify-content: space-between; align-items: center; font-weight: 800; margin-bottom: 0.6rem; }
+.qty-picker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 0.4rem; }
+.qty-chip {
+  min-height: 46px; border: 1.5px solid var(--border-strong); border-radius: var(--radius-sm);
+  background: var(--surface); font-weight: 700; font-size: 1rem;
+}
+.qty-chip.on { background: var(--brand); border-color: var(--brand); color: #fff; }
+.qty-picker-foot { margin-top: 0.7rem; }
+.qty-picker-foot .ghost { width: 100%; min-height: 44px; }
+
 /* פריטים נוספים — the manual add row on the shopping list */
 .shop-extras .extra-item { cursor: default; }
 .extra-add { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.6rem; flex-wrap: wrap; }

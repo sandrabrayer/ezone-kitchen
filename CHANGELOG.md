@@ -7,6 +7,62 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Added — par levels as the budget baseline: scaling, prices, a prominent tab, qty picker
+
+Par (מלאי מינימום) levels are now the house's monthly **budget baseline**: scaled
+to occupancy, priced, and surfaced in their own tab.
+
+**Scaled par levels (domain).** Seed pars are a REFERENCE for 25 people/week
+(`KD.BASE_PEOPLE`). A house's effective par = `seedMin × (baseTotal ÷ 25)`,
+rounded per unit (`roundParQty`): יחידות → whole, ק"ג/ליטר → 0.5, גרם/מ"ל → 50.
+A cook may OVERRIDE any item's par; the override is absolute and **never
+rescaled** (`effectivePar`, override wins). All shortfall math (קניות, צפי) now
+runs against the effective par via `withEffectiveMins`, and recomputes
+automatically when תפוסה changes (it is derived live, not stored).
+
+**Seed market prices (domain).** Every one of the 89 `SEED_CATALOG` items carries
+an estimated ₪ unit price in the item's own unit (e.g. גבינה צהובה 45 ₪/ק"ג →
+0.045 ₪/gram). Prices flow through `mergeCatalog` / `correctCatalog` (filled from
+seed like `min`), are used ONLY for the baseline estimate (no per-purchase price
+tracking), and are editable per house.
+
+**New top-level tab «כמויות בסיס».** A prominent monthly-baseline view (not hidden
+inside מלאי):
+- Header *"הכמות הבסיסית לבית לחודש — קובעת את התקציב"*, sub *"מחושב עבור X אנשים
+  (ייחוס: 25)"*.
+- Table by category: פריט | יחידה | כמות לשבוע | כמות לחודש (×4) | מחיר משוער |
+  עלות חודשית | מקור (ברירת מחדל / ידני).
+- Qty + price editable inline; edits save as per-item **overrides** (highlighted
+  ידני) via `baselineForHouse`.
+- Bottom summary *"סה"כ עלות חודשית משוערת: ₪X"* — the budget baseline. Printable
+  and shareable (WhatsApp).
+
+**Budget tab.** Shows *"בסיס מחושב: ₪X"* beside the manual monthly budget with an
+**«אמץ כתקציב»** button that copies the baseline into the month's budget.
+
+**Count screen.** Each item shows its effective minimum in muted text
+(*"מינימום: 12"*). The מלאי min column is now the **computed** effective par
+(read-only; edited in כמויות בסיס), and the below-min highlight follows it.
+
+**Mobile qty picker.** Tapping a quantity field (count + stock) opens a sheet of
+common values per unit (יחידות 0–30 then 40…200; ק"ג/ליטר 0–10 step 0.5 then
+12…30; גרם 0…5000; מ"ל 0…2000). Free typing is still allowed (`inputmode="decimal"`
++ "הקלד ידנית").
+
+**Backend (`apps-script/Code.gs`) — ⚠️ APPS SCRIPT REDEPLOY REQUIRED.** New
+**`parOverrides`** tab (`houseId | overridesJson`) and a **`saveParOverrides`**
+action; `load` returns the per-house override map. Seed **prices** need no schema
+change (domain-sourced, like par defaults). Because a tab is added, **publish a
+NEW VERSION of the EXISTING deployment** (never a new one). See
+`docs/APPS-SCRIPT-SETUP.md`.
+
+**Tests / tooling.** `test/baseline.test.js` (rounding, scaling, override
+precedence, seed prices, monthly cost, baseline total, effective-par shortfall);
+`frontend-shape` guards for the new tab / adopt / picker / effective-par wiring;
+`scripts/smoke-browser.cjs` extended to 34 assertions (baseline scaling, override
+persistence, adopt-as-budget, count reference, qty picker). Docs:
+`docs/DATA-MODEL.md`.
+
 ### Fixed — seed catalog corrections (units, typo, duplicate eggs) + migration
 
 Corrected wrong defaults in `SEED_CATALOG` and added an idempotent load-time

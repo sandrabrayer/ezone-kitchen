@@ -74,6 +74,7 @@ function startServer() {
         if (h) { h.shoppingExtras = h.shoppingExtras || {}; h.shoppingExtras[b.weekOf] = b.extras; }
         return res.json({ ok: true });
       case 'saveMenu': if (h) { h.weeks = h.weeks || {}; h.weeks[b.weekOf] = { weekOf: b.weekOf, days: b.days }; } return res.json({ ok: true });
+      case 'saveParOverrides': if (h) h.parOverrides = b.overrides; return res.json({ ok: true });
       default: return res.json({ ok: true });
     }
   });
@@ -228,6 +229,65 @@ async function main() {
     await page.waitForSelector('#screen');
     const planEmpty = await page.evaluate(() => document.querySelector('#screen').textContent);
     ok(/עדיין לא הוזן תפריט לשבוע זה/.test(planEmpty), 'empty-menu week shows the friendly message');
+
+    /* ---- כמויות בסיס baseline tab (house is 25 people → par = seed) ---- */
+    const milkKey = KD.catalogKey('חלב');
+    const riceKey2 = KD.catalogKey('אורז');
+    await page.click('[data-tab="baseline"]');
+    await page.waitForSelector('.baseline-total');
+    const bHead = await page.evaluate(() => document.querySelector('#screen').textContent);
+    ok(/הכמות הבסיסית לבית לחודש — קובעת את התקציב/.test(bHead), 'baseline header present');
+    ok(/ייחוס: 25/.test(bHead), 'reference-25 subtitle present');
+    const milkParBase = await page.$eval(`input[data-act="parMin"][data-key="${milkKey}"]`, (el) => el.value);
+    ok(milkParBase === '15', 'חלב weekly par = seed 15 at 25 people: ' + milkParBase);
+    const milkCost = await page.evaluate((k) => {
+      const inp = document.querySelector(`input[data-act="parMin"][data-key="${k}"]`);
+      const tr = inp && inp.closest('tr');
+      return tr ? tr.querySelector('.par-cost').textContent.trim() : null;
+    }, milkKey);
+    ok(milkCost && /390/.test(milkCost), 'חלב monthly cost = 60 × 6.5 = ₪390: ' + milkCost);
+
+    /* ---- count reference + qty picker ---- */
+    await page.click('[data-tab="stock"]');
+    await page.click('[data-act="countStart"]');
+    await page.waitForSelector('input[data-act="countQty"]');
+    ok(await page.evaluate(() => /מינימום:/.test(document.querySelector('#screen').textContent)), 'count screen shows the effective מינימום reference');
+    const milkCountSel = `input[data-act="countQty"][data-key="${milkKey}"]`;
+    await page.click(milkCountSel);
+    await page.waitForSelector('.qty-picker-overlay');
+    ok(true, 'tapping a count qty field opens the picker');
+    await page.click('.qty-picker [data-picker-val="5"]');
+    await page.waitForFunction(() => !document.querySelector('.qty-picker-overlay'));
+    ok((await page.$eval(milkCountSel, (el) => el.value)) === '5', 'picking a value fills the qty field (חלב = 5)');
+    await page.click('[data-act="countCancel"]');
+
+    /* ---- scaling: bump תפוסה to 50 → אורז par doubles 10 → 20 ---- */
+    await page.click('[data-tab="headcount"]');
+    await page.fill('input[data-act="baseP"]', '45'); // 45 patients + 5 staff = 50
+    await page.click('[data-tab="baseline"]');
+    await page.waitForSelector('.baseline-total');
+    ok((await page.$eval(`input[data-act="parMin"][data-key="${riceKey2}"]`, (el) => el.value)) === '20',
+      'אורז par recomputes to 20 at 50 people (auto on תפוסה change)');
+
+    /* ---- override wins and is NOT rescaled; persists ---- */
+    await page.fill(`input[data-act="parMin"][data-key="${milkKey}"]`, '12');
+    await page.fill(`input[data-act="parPrice"][data-key="${milkKey}"]`, '5');
+    await waitFor(() => {
+      const ov = db.houses[0].parOverrides && db.houses[0].parOverrides[milkKey];
+      return ov && Number(ov.min) === 12 && Number(ov.price) === 5;
+    }, 'par override saved');
+    ok(true, 'par + price override persists to the backend (absolute, not rescaled)');
+    ok(await page.$eval(`input[data-act="parMin"][data-key="${milkKey}"]`, (el) => el.classList.contains('manual')),
+      'an overridden field is highlighted as ידני');
+
+    /* ---- adopt the baseline as the monthly budget ---- */
+    await page.click('[data-tab="budget"]');
+    await page.waitForSelector('[data-act="adoptBaseline"]');
+    ok(await page.evaluate(() => /בסיס מחושב/.test(document.querySelector('.baseline-adopt').textContent)), 'budget tab shows the computed baseline');
+    await page.click('[data-act="adoptBaseline"]');
+    await page.waitForFunction(() => { const el = document.querySelector('input[data-act="budgetAmount"]'); return el && parseFloat(el.value.replace(/,/g, '')) > 0; });
+    const budgetVal = parseFloat((await page.$eval('input[data-act="budgetAmount"]', (el) => el.value)).replace(/,/g, ''));
+    ok(budgetVal > 0, 'אמץ כתקציב copied the baseline into the monthly budget: ₪' + budgetVal);
 
     await page.screenshot({ path: path.join(ROOT, 'scripts', 'smoke-shot.png'), fullPage: true });
     ok(errors.length === 0, 'no uncaught page errors' + (errors.length ? ': ' + errors.join('; ') : ''));
