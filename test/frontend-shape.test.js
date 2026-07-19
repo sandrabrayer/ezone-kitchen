@@ -69,6 +69,36 @@ test('shopping-list extras (פריטים נוספים) are wired and persisted p
   assert.match(app, /KD\.readShoppingExtra/, 'extras are normalised via the domain helper');
 });
 
+test('count is simplified: no "חדש" badge, "count what you have" framing', () => {
+  assert.ok(!/>חדש</.test(app), 'the "חדש" badge must be gone from the count');
+  assert.match(app, /סִפרו מה שיש|סיפרו מה שיש/, 'count intro reframed as "count what you have"');
+});
+
+test('the 3-step flow hint is shown on the מלאי / ספירה / קניות tabs', () => {
+  assert.match(app, /function flowHint/, 'flowHint helper');
+  assert.match(app, /flowHint\(1\)/, 'step-1 hint on stock/count');
+  assert.match(app, /flowHint\(3\)/, 'step-3 hint on shopping');
+  for (const label of ['ספירת מלאי', 'מלאי מינימום', 'רשימת קניות']) {
+    assert.ok(app.includes(label), 'hint step label missing: ' + label);
+  }
+});
+
+test('the צפי plan tab is reworked: new title/subtitle, split sections, empty message', () => {
+  assert.match(app, /צפי שבועי — השוואת תפריט מול מלאי/, 'plan title');
+  assert.match(app, /ריכוז כל המרכיבים הנדרשים, מול מה שקיים במלאי/, 'plan subtitle');
+  assert.match(app, /KD\.weeklyPlan\(week, house\.stock, days\)/, 'plan uses the weeklyPlan split');
+  assert.match(app, /עדיין לא הוזן תפריט לשבוע זה/, 'friendly empty-menu message');
+  assert.match(app, /השלמה למלאי מינימום/, 'separate par top-up section');
+  // Menu table has exactly the 4 agreed columns (no מינימום column in it).
+  assert.match(app, /<th>פריט<\/th><th>\$\{needLabel\}<\/th><th>קיים במלאי<\/th><th>חסר<\/th>/, 'menu table columns');
+});
+
+test('load applies catalog/stock corrections (typos, units, eggs merge)', () => {
+  assert.match(app, /KD\.correctCatalog\(/, 'catalog corrected on load');
+  assert.match(app, /KD\.correctStock\(h\.stock\)/, 'each house stock corrected on load');
+  assert.match(app, /_stockMigrated/, 'migrated houses are persisted');
+});
+
 test('seed-catalog is resilient: seeded before the per-house loop + at render time', () => {
   // Guards the "seed not appearing" regression: a throw in per-house normalisation
   // must not skip seeding, and a missing SEED_CATALOG export must not throw.

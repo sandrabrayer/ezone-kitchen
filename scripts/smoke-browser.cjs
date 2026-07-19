@@ -34,7 +34,12 @@ function makeDb() {
       headcount: { basePatients: 20, baseStaff: 5, overrides: {} },
       allergies: [],
       // חלב: par 15, on-hand 3  → shortfall 12 with no menu demand.
-      stock: [{ id: 'stk_milk', name: 'חלב', category: 'groceries', qty: 3, unit: 'l', minQty: 15 }],
+      // בצים + ביצים both present → the load migration must merge them into ביצים.
+      stock: [
+        { id: 'stk_milk', name: 'חלב', category: 'groceries', qty: 3, unit: 'l', minQty: 15 },
+        { id: 'stk_eggs_old', name: 'בצים', category: 'groceries', qty: 30, unit: 'unit', minQty: 0 },
+        { id: 'stk_eggs', name: 'ביצים', category: 'groceries', qty: 10, unit: 'unit', minQty: 120 },
+      ],
       purchases: [], consumption: [], stockCounts: [], shoppingExtras: {},
       // A menu that needs 20 l of חלב this week → buffered 24, shortfall 21 > par 12.
       weeks: {
@@ -114,6 +119,19 @@ async function main() {
     const addPlaceholder = await page.$eval('#stkAddName', (el) => el.getAttribute('placeholder'));
     ok(/שלא ברשימה/.test(addPlaceholder), 'bottom add-row placeholder = free-text "not in list"');
 
+    /* ---- EGGS MERGE migration: בצים folded into ביצים on load ---- */
+    const eggs = await page.evaluate(() => {
+      const names = [...document.querySelectorAll('input[data-act="stkName"]')].map((el) => el.value);
+      const row = [...document.querySelectorAll('#screen table tbody tr')]
+        .find((tr) => { const n = tr.querySelector('input[data-act="stkName"]'); return n && n.value === 'ביצים'; });
+      return { names, eggsQty: row ? row.querySelector('input[data-act="stkQty"]').value : null };
+    });
+    ok(!eggs.names.includes('בצים'), 'the בצים duplicate is gone after the load migration');
+    ok(eggs.eggsQty === '40', 'בצים qty merged into ביצים (30 + 10 = 40): ' + eggs.eggsQty);
+
+    /* ---- 3-step flow hint on the stock tab ---- */
+    ok(!!(await page.$('.flow-hint')), 'the 3-step flow hint is shown on the stock tab');
+
     /* ---- SHOPPING: max(menu shortfall 21, par top-up 12) = 21 ---- */
     await page.click('[data-tab="shopping"]');
     await page.waitForSelector('.shop-list, .empty');
@@ -162,6 +180,9 @@ async function main() {
     // full catalog must be listed, not just the single in-stock item.
     const countRows = await page.$$eval('input[data-act="countQty"]', (els) => els.length);
     ok(countRows > 50, 'count lists the FULL catalog (' + countRows + ' rows), not just in-stock items');
+    // Simplified count: no "חדש" (or any) badge in the count table.
+    const countBadges = await page.$$eval('#screen .tag', (els) => els.length);
+    ok(countBadges === 0, 'no "חדש"/other badges in the simplified count');
     // Count אורז (rice, dry) — not in stock yet — to 5.
     const riceKey = KD.catalogKey('אורז');
     const riceSel = 'input[data-act="countQty"][data-key="' + riceKey + '"]';
@@ -180,6 +201,33 @@ async function main() {
     ok(rice && rice.qty === '5', 'a new catalog item counted >0 now appears in stock (אורז = 5)');
     await waitFor(() => !!db.houses[0].stock.find((s) => s.name === 'אורז' && s.qty === 5), 'stock count saved');
     ok(!!db.houses[0].stock.find((s) => s.name === 'אורז' && s.qty === 5), 'the counted item is persisted to the backend');
+
+    /* ---- After a count, ALL items exist in stock incl 0-qty (+ unit fix) ---- */
+    await page.click('[data-act="stockCat"][data-cat="groceries"]');
+    await page.waitForSelector('input[data-act="stkName"]');
+    const cheese = await page.evaluate(() => {
+      const row = [...document.querySelectorAll('#screen table tbody tr')]
+        .find((tr) => { const n = tr.querySelector('input[data-act="stkName"]'); return n && n.value === 'גבינה צהובה'; });
+      if (!row) return null;
+      const u = row.querySelector('select[data-act="stkUnit"]');
+      return { qty: row.querySelector('input[data-act="stkQty"]').value, unit: u ? u.value : null };
+    });
+    ok(cheese && (cheese.qty === '' || cheese.qty === '0'), 'a 0-qty catalog item is kept in stock after a count (גבינה צהובה)');
+    ok(cheese && cheese.unit === 'g', 'unit correction applied: גבינה צהובה is in גרם (g)');
+
+    /* ---- צפי plan tab: title, menu section, separate par section ---- */
+    await page.click('[data-tab="plan"]');
+    await page.waitForSelector('#screen');
+    const planText = await page.evaluate(() => document.querySelector('#screen').textContent);
+    ok(/השוואת תפריט מול מלאי/.test(planText), 'plan tab shows the new title');
+    ok(/השלמה למלאי מינימום/.test(planText), 'plan shows the separate par top-up section');
+    // Empty-menu week → friendly message instead of a table.
+    await page.click('[data-tab="menu"]');
+    await page.click('[data-act="weekNext"]');
+    await page.click('[data-tab="plan"]');
+    await page.waitForSelector('#screen');
+    const planEmpty = await page.evaluate(() => document.querySelector('#screen').textContent);
+    ok(/עדיין לא הוזן תפריט לשבוע זה/.test(planEmpty), 'empty-menu week shows the friendly message');
 
     await page.screenshot({ path: path.join(ROOT, 'scripts', 'smoke-shot.png'), fullPage: true });
     ok(errors.length === 0, 'no uncaught page errors' + (errors.length ? ': ' + errors.join('; ') : ''));

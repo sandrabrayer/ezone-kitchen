@@ -7,6 +7,64 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Fixed — seed catalog corrections (units, typo, duplicate eggs) + migration
+
+Corrected wrong defaults in `SEED_CATALOG` and added an idempotent load-time
+migration that heals already-stored data:
+
+- **Units / pars fixed:** גבינה לבנה → **יחידות** (גביעים, min 6); גבינה צהובה →
+  **גרם** (min 3000); חמאה → **יחידות** (min 8); שמנת מתוקה / שמנת חמוצה are
+  **יחידות** (גביעים). (ביצים stays יחידות 120; עגבניות stays ק״ג in **ירקות**.)
+- **Typo / duplicate cleanup:** `בצים` → `ביצים` and `עכבניות` → `עגבניות` are
+  now aliases folded into their canonical item. Eggs are **ביצים only**.
+- **Audit:** reviewed the full 89-item seed — no other typos or wrong categories
+  found (רסק עגבניות / עגבניות משומרות are legitimately separate יבשים items).
+- **Migration (`lib/kitchen-domain.js`, applied in `public/app.js` `loadState`):**
+  - `correctCatalog(catalog)` — renames aliases, forces the canonical
+    unit/category/par for the fixed items, de-duplicates. Because the merge is
+    "backend-first-wins", this override is what makes an *already-stored* catalog
+    pick up the corrections; the corrected catalog is persisted once (name **or**
+    unit/category change now triggers the write) then converges.
+  - `correctStock(stock)` — folds an alias-named pantry row into its canonical
+    item, **summing quantities** (בצים 30 + ביצים 10 → ביצים 40); a lone בצים row
+    is renamed. Migrated houses are persisted so the fix is durable.
+  - Tests: `test/corrections.test.js`; `test/seed-catalog.test.js` gains the
+    corrected-unit spot checks.
+- No Apps Script **redeploy** needed — the Sheet schema is unchanged; corrected
+  catalog/stock rows are written via the existing `saveCatalog` / `saveStock`.
+
+### Changed — stock count simplified ("count what you have")
+
+- **Removed the "חדש" badge** from ספירת מלאי — it confused cooks. The count is
+  simply: go over every catalog item and record what you have (0 for what you
+  don't). Intro reworded accordingly.
+- **Saving a count now writes EVERY item into stock, including 0-qty rows**
+  (`applyStockCount` no longer drops not-in-stock zeros) — the count is the full
+  pantry list, empty items included, so par-based shortfalls surface for all of
+  them. Tests updated (`test/stock-count.test.js`).
+- **Three-step flow hint** (`ספירת מלאי` → `מלאי מינימום` → `רשימת קניות`, with
+  a one-line "מה יש / מה צריך / מה חסר" gloss) shown atop the מלאי, ספירה and
+  קניות tabs so the pantry workflow is self-explanatory.
+
+### Changed — צפי (weekly plan) reworked to be self-explanatory
+
+- Title **"צפי שבועי — השוואת תפריט מול מלאי"**; subtitle explains it compares the
+  week's required ingredients against current stock.
+- Menu table trimmed to the four agreed columns: **פריט | נדרש לשבוע | קיים במלאי
+  | חסר** (the raw menu shortfall, no buffer).
+- An **empty week** shows a friendly *"עדיין לא הוזן תפריט לשבוע זה"* message
+  instead of an empty table.
+- Items **not in the menu but below their par** move to a separate
+  **"השלמה למלאי מינימום"** section, so cooks see *why* each such item is on the
+  shopping list. New pure `weeklyPlan(week, stock, days)` (menu / parTopUp split
+  + `menuEmpty`), unit-tested in `test/corrections.test.js`.
+
+### Tooling
+
+- `scripts/smoke-browser.cjs` extended: eggs-merge migration, no-badge count,
+  0-qty items kept after a count, unit correction (גבינה צהובה → גרם), and the
+  reworked plan tab (title, par section, empty-menu message) — 22 assertions.
+
 ### Added — stock count over the full catalog + per-week shopping extras (domain)
 
 New pure, unit-tested functions in `lib/kitchen-domain.js`:

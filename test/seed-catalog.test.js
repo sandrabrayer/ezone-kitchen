@@ -35,6 +35,29 @@ test('SEED_CATALOG carries the specified par levels (spot checks)', () => {
   assert.equal(KD.catalogLookup(KD.SEED_CATALOG, 'פפריקה').unit, 'g');
 });
 
+test('SEED_CATALOG dairy unit corrections', () => {
+  const e = (n) => KD.catalogLookup(KD.SEED_CATALOG, n);
+  assert.equal(e('גבינה לבנה').unit, 'unit');   // גביעים
+  assert.equal(e('גבינה לבנה').min, 6);
+  assert.equal(e('גבינה צהובה').unit, 'g');
+  assert.equal(e('גבינה צהובה').min, 3000);
+  assert.equal(e('חמאה').unit, 'unit');
+  assert.equal(e('חמאה').min, 8);
+  assert.equal(e('שמנת מתוקה').unit, 'unit');   // גביעים
+  assert.equal(e('שמנת חמוצה').unit, 'unit');   // גביעים
+});
+
+test('SEED_CATALOG has עגבניות in ירקות once, no מכולת duplicate, no typo/eggs-dupe', () => {
+  const tomato = KD.SEED_CATALOG.filter((e) => KD.catalogKey(e.name) === KD.catalogKey('עגבניות'));
+  assert.equal(tomato.length, 1);
+  assert.equal(tomato[0].category, 'vegetables');
+  // no misspellings present in the seed
+  assert.equal(KD.catalogLookup(KD.SEED_CATALOG, 'עכבניות'), null);
+  assert.equal(KD.catalogLookup(KD.SEED_CATALOG, 'בצים'), null);
+  // eggs are ביצים only
+  assert.ok(KD.catalogLookup(KD.SEED_CATALOG, 'ביצים'));
+});
+
 test('seedCatalog populates an empty catalog with every seed item + its min', () => {
   const cat = KD.seedCatalog([]);
   assert.equal(cat.length, 89);
