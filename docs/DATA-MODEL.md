@@ -19,6 +19,7 @@ into the nested `AppState` the frontend uses.
 | `menus`            | `houseId`, `weekOf`, `daysJson`                     | One row per (house, week); the week's nested days are JSON. |
 | `purchases`        | `id`, `houseId`, `weekOf`, `amount`, `note`, `date` | Actual logged spend (grouped by `date`'s month). |
 | `consumption`      | `id`, `houseId`, `weekOf`, `day`, `executedAt`      | A "served" marker per day — makes the stock deduction idempotent. |
+| `shoppingExtras`   | `id`, `houseId`, `weekOf`, `name`, `qty`, `unit`, `category` | Manual "פריטים נוספים" the cook adds to one week's shopping list; replaced per (house, week). |
 
 Columns are mapped by **position** (`Code.gs` `readRows_`), so in an existing
 Sheet the `stock.qty` header cell may still literally read `qtyKg` and
@@ -49,6 +50,7 @@ House {
   purchases   [ { id, weekOf, amount, note, date } ],
   consumption [ { id, weekOf, day, executedAt } ],   // served-day markers (idempotency)
   stockCounts [ { id, date, items: [ StockItem ] } ], // dated snapshots
+  shoppingExtras { [weekOf]: [ { id, name, qty, unit, category } ] }, // manual list items, per week
   weeks       { [weekOf]: { weekOf, days } }   // days = { [day]: { breakfast:[Dish], lunch:[Dish], dinner:[Dish] } }
 }
 Dish       { id, name, ingredients: [ Ingredient ] }

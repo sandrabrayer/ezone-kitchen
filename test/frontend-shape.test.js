@@ -32,12 +32,41 @@ test('new stock/count/budget/overrun controls are wired', () => {
   }
 });
 
-test('the default seed catalog is merged on load and the add-combobox is wired', () => {
+test('the default seed catalog is merged on load and the stock comboboxes are wired', () => {
   assert.match(app, /KD\.SEED_CATALOG/, 'loadState must merge the domain seed catalog');
-  assert.match(app, /catalogAddDatalist/, 'per-category add datalist helper');
-  assert.match(app, /id="stkAddName"/, 'the "הוסף פריט" combobox input');
+  assert.match(app, /function categoryComboDatalists/, 'per-category combobox datalist helper');
+  assert.match(app, /id="stkAddName"/, 'the "הוסף" free-text input');
   assert.match(app, /function addStockItem/, 'add handler that pre-fills the par level');
-  assert.match(app, /list="catalogAddList"/, 'add input references the category datalist');
+});
+
+test('every stock row name is a category-scoped combobox (fixes empty seeded names)', () => {
+  // The row name input must be a datalist combobox scoped to the item category,
+  // with its value set so a seeded item name always shows INSIDE the input.
+  assert.match(app, /list="catCombo_\$\{item\.category\}" value="\$\{esc\(item\.name\)\}"/,
+    'row name = category combobox with the value populated');
+  // The empty quantity box must hint "0" (כמות במלאי awaiting count).
+  assert.match(app, /data-act="stkQty"[^]*?placeholder="0"|placeholder="0"[^]*?data-act="stkQty"/,
+    'stock qty input has a visible 0 placeholder');
+  // The bottom add-row is free-text only now (no catalog datalist), new placeholder.
+  assert.match(app, /פריט חדש שלא ברשימה/, 'add-row placeholder for free-text new items');
+  assert.ok(!/list="catalogAddList"/.test(app), 'the bottom add-row must not be a catalog picker anymore');
+});
+
+test('the stock count lists the full catalog and saves added items', () => {
+  assert.match(app, /KD\.stockCountRows\(state\.catalog, house\.stock\)/, 'count renders full-catalog rows');
+  assert.match(app, /KD\.applyStockCount\(state\.catalog, house\.stock, state\.countValues\)/, 'save writes counted items');
+  assert.match(app, /data-act="countQty" data-key=/, 'count inputs are keyed by catalog key');
+});
+
+test('shopping-list extras (פריטים נוספים) are wired and persisted per week', () => {
+  assert.match(app, /function renderShoppingExtras/, 'extras section renderer');
+  assert.match(app, /function addShoppingExtra/, 'extras add handler');
+  assert.match(app, /פריטים נוספים/, 'the extras section heading');
+  for (const act of ['extraAdd', 'extraDel']) {
+    assert.ok(app.includes("'" + act + "'") || app.includes('data-act="' + act + '"'), 'missing wiring for ' + act);
+  }
+  assert.match(app, /saveShoppingExtras/, 'extras persist via the backend action');
+  assert.match(app, /KD\.readShoppingExtra/, 'extras are normalised via the domain helper');
 });
 
 test('seed-catalog is resilient: seeded before the per-house loop + at render time', () => {
@@ -58,10 +87,10 @@ test('seed-catalog is resilient: seeded before the per-house loop + at render ti
 
 test('Code.gs declares the new tabs the frontend relies on', () => {
   const gs = fs.readFileSync(path.join(__dirname, '..', 'apps-script', 'Code.gs'), 'utf8');
-  for (const tab of ['catalog', 'stockCounts', 'monthlyBudgets']) {
+  for (const tab of ['catalog', 'stockCounts', 'monthlyBudgets', 'shoppingExtras']) {
     assert.ok(gs.includes(tab + ':'), 'Code.gs missing SHEETS.' + tab);
   }
-  for (const action of ['saveCatalog', 'saveStockCount', 'saveBudget']) {
+  for (const action of ['saveCatalog', 'saveStockCount', 'saveBudget', 'saveShoppingExtras']) {
     assert.ok(gs.includes("case '" + action + "'"), 'Code.gs missing action ' + action);
   }
   assert.match(gs, /stock:\s*\['id',\s*'houseId',\s*'name',\s*'category',\s*'qty',\s*'unit',\s*'min'\]/, 'stock tab must gain the min column');

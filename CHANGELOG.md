@@ -7,6 +7,81 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Added — stock count over the full catalog + per-week shopping extras (domain)
+
+New pure, unit-tested functions in `lib/kitchen-domain.js`:
+
+- **`stockCountRows(catalog, stock)`** — the rows a stock count shows: every
+  catalog item (seeded + user) grouped by category, PLUS any pantry item whose
+  name is not in the catalog, each carrying its unit, default par (מלאי מינימום)
+  and CURRENT stock quantity (0 when not stocked yet). Matched to stock by
+  normalised name; category-ordered then Hebrew name.
+- **`applyStockCount(catalog, stock, values)`** — applies a count. An item
+  already in stock is set to its counted qty (INCLUDING 0 — it stays at 0); an
+  item not in stock counted `> 0` is ADDED (with the catalog's unit / category /
+  default par); an item not in stock left at 0 is omitted. Pure — returns a NEW
+  stock array; the result is the full pantry summary.
+- **`readShoppingExtra(e)`** — normalises a manual shopping-list item to
+  `{ id, name, qty, unit, category }` (negative/unknown values coerced to safe
+  defaults; legacy `value` read as `qty`).
+
+- **Tests**: `test/stock-count.test.js` gains full-catalog-listing,
+  add-on-count, keep-existing-at-0, free-text-preservation and
+  no-input-mutation cases; new `test/shopping-extras.test.js`.
+
+### Changed — cooks' מלאי / ספירת מלאי / קניות UX
+
+**מלאי (stock tab).**
+
+- **Fixed — empty seeded name boxes:** a seeded stock row now always renders its
+  name INSIDE the input. Every row's name field is a **category-scoped catalog
+  combobox** (`<input list="catCombo_<category>">` — searchable, still accepts
+  free text) with its `value` populated, replacing the single global datalist.
+- Selecting a catalog item **auto-fills** its unit, category and default
+  **מלאי מינימום** (a par level the cook already set is preserved; the row also
+  follows the item to its category tab).
+- The empty **quantity** box now shows a visible **"0"** placeholder so cooks
+  read it as כמות במלאי awaiting a count.
+- The bottom **הוסף** row is now **free-text only** for items not in the catalog
+  (placeholder “פריט חדש שלא ברשימה…”); adding it still registers the new name in
+  the shared catalog (permanent list).
+
+**ספירת מלאי (stock count).**
+
+- The count now lists the **FULL catalog** grouped by category (every seeded +
+  user item), each with its unit and a qty input defaulting to the current stock
+  qty (0 when not stocked yet), plus any free-text pantry item so nothing is lost.
+- Saving writes **all** counted items into stock — an item counted `> 0` that was
+  not in stock gets added (with its default par) — and stores the dated snapshot.
+  Items left at 0 remain/become 0. The count IS the full pantry summary.
+
+**קניות (shopping list).**
+
+- New **“פריטים נוספים”** section: the cook adds free items (name via catalog
+  combobox or free text, quantity, unit) to the current week's list. Items are
+  **removable**, **persist per week** (backend), and are included in the printed /
+  WhatsApp list. The existing shortfall + par top-up logic is unchanged.
+
+**Backend (`apps-script/Code.gs`) — ⚠️ APPS SCRIPT REDEPLOY REQUIRED.**
+
+- New **`shoppingExtras`** tab (`id | houseId | weekOf | name | qty | unit |
+  category`) and a **`saveShoppingExtras`** action (replaces the rows for a
+  house+week so removals persist); `load` returns extras grouped per week. Because
+  this adds a tab/column, **publish a NEW VERSION of the EXISTING Apps Script
+  deployment** (pencil icon — never a new deployment, or the `/exec` URL changes).
+  See `docs/APPS-SCRIPT-SETUP.md`.
+
+**Tests / tooling.**
+
+- `test/frontend-shape.test.js` locks in the new stock combobox, the "0"
+  placeholder, the free-text add row, the full-catalog count wiring, and the
+  shopping-extras wiring (incl. the new `Code.gs` tab + action).
+- `scripts/smoke-browser.cjs` — a browser end-to-end smoke test (NOT run by CI;
+  needs Chromium) covering the full compare flow from the task's step 7:
+  name-in-input, "0" placeholder, min=15 + qty=3 → 12 to buy, menu-beyond-stock
+  max logic, count-adds-new-item, extra persists per week across reload.
+- Docs: `docs/DATA-MODEL.md` documents the `shoppingExtras` tab and shape.
+
 ### Fixed — seeded catalog not appearing (datalists showed only user items)
 
 In production the מלאי add-combobox and the name datalists showed only items the

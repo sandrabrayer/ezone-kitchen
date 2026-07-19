@@ -407,6 +407,14 @@ input.over { color: var(--danger); font-weight: 800; }
 .cat-fruits { background: var(--cat-fruits); }
 .cat-meat { background: var(--cat-meat); }
 .cat-dry { background: var(--cat-dry); }
+.cat-extra { background: var(--brand); }
+
+/* פריטים נוספים — the manual add row on the shopping list */
+.shop-extras .extra-item { cursor: default; }
+.extra-add { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.6rem; flex-wrap: wrap; }
+.extra-add > input#extraName { flex: 1 1 160px; min-width: 140px; }
+.extra-add > select#extraUnit { width: 84px; }
+.extra-add .add-row { width: auto; min-height: 44px; padding: 0.4rem 1rem; }
 
 .shop-list { list-style: none; margin: 0; padding: 0; }
 .shop-item {

@@ -18,6 +18,7 @@
  *   menus          houseId | weekOf | daysJson
  *   purchases      id | houseId | weekOf | amount | note | date
  *   consumption    id | houseId | weekOf | day | executedAt (served-day markers)
+ *   shoppingExtras id | houseId | weekOf | name | qty | unit | category  (manual list items, per week)
  *
  * Columns are mapped by POSITION (see readRows_), so the header text in an
  * existing Sheet is cosmetic: the `qty` column is what used to be `qtyKg`
@@ -42,7 +43,8 @@ var SHEETS = {
   stockCounts: ['id', 'houseId', 'date', 'itemsJson'],
   menus: ['houseId', 'weekOf', 'daysJson'],
   purchases: ['id', 'houseId', 'weekOf', 'amount', 'note', 'date'],
-  consumption: ['id', 'houseId', 'weekOf', 'day', 'executedAt']
+  consumption: ['id', 'houseId', 'weekOf', 'day', 'executedAt'],
+  shoppingExtras: ['id', 'houseId', 'weekOf', 'name', 'qty', 'unit', 'category']
 };
 
 var CATEGORIES = ['groceries', 'vegetables', 'fruits', 'meat', 'dry'];
@@ -89,6 +91,7 @@ function doPost(e) {
           return [c.id || uid_('cons'), body.houseId, c.weekOf || '', c.day || '', c.executedAt || ''];
         })); break;
         case 'saveMenu': result = saveMenu_(body.houseId, body.weekOf, body.days); break;
+        case 'saveShoppingExtras': result = saveShoppingExtras_(body.houseId, body.weekOf, body.extras); break;
         default: result = { ok: false, error: 'unknown_action:' + action };
       }
     } finally {
@@ -233,6 +236,31 @@ function saveStockCount_(houseId, count) {
   return { ok: true };
 }
 
+// Manual shopping-list items ("פריטים נוספים") for ONE week. Replace every row
+// for (houseId, weekOf) so that removing an item persists. Blank names dropped.
+function saveShoppingExtras_(houseId, weekOf, extras) {
+  if (!houseId || !weekOf) return { ok: false, error: 'houseId & weekOf required' };
+  var sh = sheet_('shoppingExtras');
+  var headers = SHEETS.shoppingExtras;
+  var hIdx = headers.indexOf('houseId');
+  var wIdx = headers.indexOf('weekOf');
+  var kept = [];
+  var last = sh.getLastRow();
+  if (last >= 2) {
+    var values = sh.getRange(2, 1, last - 1, headers.length).getValues();
+    kept = values.filter(function (row) {
+      return !(String(row[hIdx]) === String(houseId) && String(row[wIdx]) === String(weekOf));
+    });
+  }
+  var newRows = (extras || []).map(function (e) {
+    return [e.id || uid_('extra'), houseId, String(weekOf), String(e.name || ''), num_(e.qty), unit_(e.unit), category_(e.category)];
+  }).filter(function (r) { return String(r[3]).trim() !== ''; });
+  var all = kept.concat(newRows);
+  if (last >= 2) sh.getRange(2, 1, last - 1, headers.length).clearContent();
+  if (all.length) sh.getRange(2, 1, all.length, headers.length).setValues(all);
+  return { ok: true, count: newRows.length };
+}
+
 // Per-month budget + approved overrun. Upsert by (houseId, month).
 function saveBudget_(houseId, month, budget) {
   if (!houseId || !month) return { ok: false, error: 'houseId & month required' };
@@ -275,6 +303,7 @@ function loadAll_() {
   var stockCounts = groupBy_(readRows_('stockCounts'), 'houseId');
   var monthlyBudgets = groupBy_(readRows_('monthlyBudgets'), 'houseId');
   var menus = groupBy_(readRows_('menus'), 'houseId');
+  var shoppingExtras = groupBy_(readRows_('shoppingExtras'), 'houseId');
   var catalog = readRows_('catalog').map(function (c) {
     return { name: String(c.name || ''), unit: unit_(c.unit), category: category_(c.category) };
   }).filter(function (c) { return c.name !== ''; });
@@ -291,6 +320,11 @@ function loadAll_() {
     (monthlyBudgets[id] || []).forEach(function (b) {
       budgets[String(b.month)] = { budget: num_(b.budget), overrun: num_(b.overrun), overrunNote: String(b.overrunNote || '') };
     });
+    var extras = {};
+    (shoppingExtras[id] || []).forEach(function (e) {
+      var wk = String(e.weekOf);
+      (extras[wk] = extras[wk] || []).push({ id: String(e.id), name: e.name || '', qty: num_(e.qty), unit: unit_(e.unit), category: category_(e.category) });
+    });
     return {
       id: id,
       name: h.name || '',
@@ -304,6 +338,7 @@ function loadAll_() {
       purchases: (purchases[id] || []).map(function (p) { return { id: String(p.id), weekOf: String(p.weekOf), amount: num_(p.amount), note: p.note || '', date: String(p.date || '') }; }),
       consumption: (consumption[id] || []).map(function (c) { return { id: String(c.id), weekOf: String(c.weekOf), day: String(c.day), executedAt: String(c.executedAt || '') }; }),
       stockCounts: (stockCounts[id] || []).map(function (c) { return { id: String(c.id), date: String(c.date), items: safeParse_(c.itemsJson, []) }; }),
+      shoppingExtras: extras,
       weeks: weeks
     };
   });

@@ -16,3 +16,4 @@ dist/
 # local verification harness / screenshots (not committed)
 scratchpad/
 scratchpad-verify.js
+scripts/smoke-shot.png
