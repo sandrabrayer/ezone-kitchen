@@ -89,6 +89,16 @@ test('budget tab shows the computed baseline + an אמץ כתקציב button', (
   assert.match(app, /function adoptBaselineAsBudget/, 'adopt handler copies baseline into the budget');
 });
 
+test('reset-to-default is wired: per-row (baseline + stock) and bulk', () => {
+  assert.match(app, /data-act="parReset"/, 'per-row baseline reset button');
+  assert.match(app, /אפס הכל לברירת מחדל/, 'bulk reset button label');
+  assert.match(app, /data-act="parResetAll"/, 'bulk reset wired');
+  assert.match(app, /data-act="stkResetMin"/, 'per-row stock min reset button');
+  assert.match(app, /KD\.clearParOverride/, 'reset uses the pure domain helper');
+  // bulk reset must confirm before wiping
+  assert.match(app, /parResetAll'[^]*?window\.confirm/, 'bulk reset asks for confirmation');
+});
+
 test('effective (scaled/override) par drives shortfall + the count reference', () => {
   assert.match(app, /function effectiveStock/, 'effective-min stock helper');
   assert.match(app, /KD\.withEffectiveMins/, 'shortfall uses effective mins');

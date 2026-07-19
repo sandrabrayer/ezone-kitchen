@@ -746,13 +746,15 @@ function renderStock(house) {
     const unit = KD.safeUnit(item.unit);
     const effMin = (effItems[i] && effItems[i].minQty) || 0;
     const below = effMin > 0 && (Number(item.qty) || 0) < effMin;
+    const parKey = KD.catalogKey(item.name);
+    const manualMin = !!(house.parOverrides && house.parOverrides[parKey] && Object.prototype.hasOwnProperty.call(house.parOverrides[parKey], 'min'));
     const catOpts = KD.CATEGORIES.map((c) => `<option value="${c}" ${c === item.category ? 'selected' : ''}>${esc(KD.CATEGORY_LABELS_HE[c])}</option>`).join('');
     return `<tr class="${below ? 'below-min' : ''}">
       <td><input class="stk-name" list="catCombo_${item.category}" value="${esc(item.name)}" placeholder="בחר פריט…" data-act="stkName" data-id="${esc(item.id)}" /></td>
       <td><select data-act="stkCat" data-id="${esc(item.id)}">${catOpts}</select></td>
       <td><span class="u"><input type="number" inputmode="decimal" min="0" step="${qtyStep(unit)}" value="${item.qty || ''}" placeholder="0" data-act="stkQty" data-id="${esc(item.id)}" data-picker="${unit}" style="width:74px" title="כמות במלאי" />
         <select data-act="stkUnit" data-id="${esc(item.id)}">${unitOptions(unit)}</select></span></td>
-      <td class="num muted stk-min${below ? ' over' : ''}" title="מחושב לפי הכמויות הבסיסיות">${effMin > 0 ? fmtQty(effMin, unit) : '—'}</td>
+      <td class="num muted stk-min${below ? ' over' : ''}${manualMin ? ' manual' : ''}" title="${manualMin ? 'מינימום ידני (מהכמויות הבסיסיות)' : 'מחושב לפי הכמויות הבסיסיות'}">${effMin > 0 ? fmtQty(effMin, unit) : '—'}${manualMin ? ` <button class="icon-btn reset-btn no-print" data-act="stkResetMin" data-key="${esc(parKey)}" title="אפס מינימום לברירת מחדל" aria-label="אפס מינימום לברירת מחדל">↺</button>` : ''}</td>
       <td><button class="danger" data-act="stkDel" data-id="${esc(item.id)}">מחק</button></td>
     </tr>`;
   }).join('') : `<tr><td colspan="5" class="muted">אין פריטים בקטגוריה זו.</td></tr>`;
@@ -836,6 +838,7 @@ function renderStockCount(house) {
 function renderBaseline(house) {
   const people = KD.baseTotal(house.headcount);
   const b = KD.baselineForHouse(state.catalog, people, house.parOverrides || {});
+  const hasOverrides = Object.keys(house.parOverrides || {}).length > 0;
 
   const sections = KD.CATEGORIES.map((c) => {
     const rows = b.rows.filter((r) => r.category === c);
@@ -850,11 +853,12 @@ function renderBaseline(house) {
         <td><span class="money-in">₪<input type="number" inputmode="decimal" min="0" step="0.01" value="${r.price || ''}" placeholder="0" data-act="parPrice" data-key="${esc(r.key)}" class="par-price${r.priceSource === 'manual' ? ' manual' : ''}" style="width:70px" /></span></td>
         <td class="num par-cost">${fmtCurrency(r.monthlyCost)}</td>
         <td class="muted par-src">${manual ? 'ידני' : 'ברירת מחדל'}</td>
+        <td class="par-actions no-print"><button class="icon-btn reset-btn" data-act="parReset" data-key="${esc(r.key)}" title="אפס לברירת מחדל" aria-label="אפס לברירת מחדל" ${manual ? '' : 'hidden'}>↺</button></td>
       </tr>`;
     }).join('');
     return `<h3 class="count-cat"><span class="cat-dot cat-${c}" aria-hidden="true"></span>${esc(KD.CATEGORY_LABELS_HE[c])}</h3>
       <div class="table-scroll"><table class="baseline-table">
-        <thead><tr><th>פריט</th><th>יחידה</th><th>כמות לשבוע</th><th>לחודש (×4)</th><th>מחיר משוער</th><th>עלות חודשית</th><th>מקור</th></tr></thead>
+        <thead><tr><th>פריט</th><th>יחידה</th><th>כמות לשבוע</th><th>לחודש (×4)</th><th>מחיר משוער</th><th>עלות חודשית</th><th>מקור</th><th class="no-print"></th></tr></thead>
         <tbody>${trs}</tbody></table></div>`;
   }).join('');
 
@@ -867,6 +871,7 @@ function renderBaseline(house) {
         <span class="muted">מחושב עבור <strong>${people}</strong> אנשים (ייחוס: ${KD.BASE_PEOPLE}). ערכי ברירת המחדל ניתנים לעריכה — עריכה נשמרת כערך <strong>ידני</strong> ומודגשת.</span>
       </div>
       <div class="head-actions no-print">
+        <button data-act="parResetAll" ${hasOverrides ? '' : 'disabled'} title="הסר את כל הערכים הידניים בבית זה">↺ אפס הכל לברירת מחדל</button>
         <button data-act="printBaseline">🖨️ הדפס</button>
         <button class="primary" data-act="baselineShare">📱 שיתוף</button>
       </div>
@@ -898,7 +903,12 @@ function updateBaselineRowLive(house, inputEl, key) {
   const priceI = tr.querySelector('input[data-act="parPrice"]');
   if (minI) minI.classList.toggle('manual', r.minSource === 'manual');
   if (priceI) priceI.classList.toggle('manual', r.priceSource === 'manual');
-  tr.classList.toggle('par-manual', r.minSource === 'manual' || r.priceSource === 'manual');
+  const manual = r.minSource === 'manual' || r.priceSource === 'manual';
+  tr.classList.toggle('par-manual', manual);
+  const rb = tr.querySelector('button[data-act="parReset"]');
+  if (rb) rb.hidden = !manual;
+  const resetAll = document.querySelector('button[data-act="parResetAll"]');
+  if (resetAll) resetAll.disabled = !Object.keys(house.parOverrides || {}).length;
 }
 
 /* Set or clear a per-item par/price override, then persist. */
@@ -1474,6 +1484,20 @@ async function onClick(e) {
     case 'printBaseline': window.print(); break;
     case 'baselineShare': window.open('https://wa.me/?text=' + encodeURIComponent(baselineText(house)), '_blank'); break;
     case 'adoptBaseline': adoptBaselineAsBudget(house); break;
+    case 'parReset': { // reset one baseline row (qty + price) to the seed default
+      house.parOverrides = KD.clearParOverride(house.parOverrides || {}, d.key);
+      persist.parOverrides(house); render(); setStatus('אופס לברירת מחדל ✓'); break;
+    }
+    case 'parResetAll': {
+      if (!Object.keys(house.parOverrides || {}).length) break;
+      if (!window.confirm('לאפס את כל הכמויות והמחירים לברירת המחדל?\nכל השינויים הידניים בבית זה יימחקו.')) break;
+      house.parOverrides = {};
+      persist.parOverrides(house); render(); setStatus('כל הערכים אופסו לברירת מחדל ✓'); break;
+    }
+    case 'stkResetMin': { // reset a stock item's manual MIN override to the default
+      house.parOverrides = KD.clearParOverride(house.parOverrides || {}, d.key, 'min');
+      persist.parOverrides(house); render(); setStatus('המינימום אופס לברירת מחדל ✓'); break;
+    }
     case 'openHouse': state.activeHouseId = d.id; state.tab = 'menu'; render(); break;
 
     case 'selHouse': state.activeHouseId = d.id; render(); break;

@@ -7,6 +7,32 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Added — reset par/price overrides to the seed default
+
+Cooks can now undo manual par/price overrides:
+
+- **Per-row reset** in «כמויות בסיס»: an **↺ «אפס לברירת מחדל»** icon button on every
+  row that has a manual override removes it (qty **and** price) and returns the
+  row to the scaled seed default; the row loses its **ידני** highlight. The button
+  only appears on manual rows (and toggles live as a cell is edited).
+- **Bulk reset**: an **«אפס הכל לברירת מחדל»** button at the top clears every
+  par/price override for the house, behind a `confirm()` dialog. Disabled when
+  there are no overrides.
+- **Stock tab**: a stock row whose minimum is a manual override shows the same
+  **↺** reset next to its computed מינימום (clears the min override only, keeping
+  any price override).
+- Resets are **house-scoped** and persist via the existing `saveParOverrides`
+  action — **no Apps Script redeploy needed** (no schema change).
+- New pure domain helper **`clearParOverride(overrides, key, field?)`** (removes a
+  whole entry, or just `min`/`price`; never mutates the input map). Fixed a CSS
+  bug where `button { display: inline-flex }` defeated the `hidden` attribute
+  (added `[hidden] { display: none !important }`).
+- Tests: `test/reset-overrides.test.js` (reset single, reset field-only, reset
+  all → all-default baseline, house-scoped/no-mutation, prototype-pollution
+  guard); `frontend-shape` guards; `scripts/smoke-browser.cjs` extended to 40
+  assertions (per-row reset → back to scaled default + highlight cleared, stock
+  min reset, bulk reset with confirm).
+
 ### Added — par levels as the budget baseline: scaling, prices, a prominent tab, qty picker
 
 Par (מלאי מינימום) levels are now the house's monthly **budget baseline**: scaled
