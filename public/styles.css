@@ -107,6 +107,9 @@ button {
   display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
   transition: background 0.15s, border-color 0.15s, transform 0.05s;
 }
+/* the `hidden` attribute must win over the display above (used to toggle the
+   per-row reset button) */
+[hidden] { display: none !important; }
 button:active { transform: translateY(1px); }
 button:hover { border-color: var(--brand); }
 button.primary { background: var(--brand); border-color: var(--brand); color: #fff; box-shadow: 0 2px 8px rgba(11, 132, 87, 0.28); }
@@ -439,6 +442,15 @@ input.over { color: var(--danger); font-weight: 800; }
 input.manual { border-color: var(--brand); background: var(--brand-tint); font-weight: 700; }
 tr.par-manual td { background: color-mix(in srgb, var(--brand) 7%, transparent); }
 .par-src { font-size: 0.78rem; }
+.par-actions { text-align: center; }
+/* small "reset to default" icon button (baseline + stock min) */
+.reset-btn {
+  min-width: 32px; min-height: 32px; padding: 0; font-size: 1rem; line-height: 1;
+  color: var(--brand-strong); background: transparent; border-color: transparent;
+}
+.reset-btn:hover { background: var(--brand-tint); border-color: var(--brand); }
+td.stk-min.manual { color: var(--brand-strong); font-weight: 700; }
+td.stk-min .reset-btn { margin-inline-start: 0.25rem; vertical-align: middle; }
 .baseline-total {
   display: flex; justify-content: space-between; align-items: center; gap: 1rem;
   margin-top: 1rem; padding: 0.9rem 1rem; border-radius: var(--radius-sm);

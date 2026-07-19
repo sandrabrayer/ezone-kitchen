@@ -280,6 +280,38 @@ async function main() {
     ok(await page.$eval(`input[data-act="parMin"][data-key="${milkKey}"]`, (el) => el.classList.contains('manual')),
       'an overridden field is highlighted as ידני');
 
+    /* ---- reset overrides: per-row, stock-min, and bulk (house-scoped) ---- */
+    page.on('dialog', (dlg) => dlg.accept()); // accept the bulk-reset confirm
+    // per-row baseline reset → override cleared, par back to the scaled 30 @ 50 people
+    await page.click(`button[data-act="parReset"][data-key="${milkKey}"]`);
+    await waitFor(() => !(db.houses[0].parOverrides && db.houses[0].parOverrides[milkKey]), 'per-row reset cleared the override');
+    ok(true, 'per-row אפס לברירת מחדל clears the override');
+    await page.waitForSelector('.baseline-total');
+    ok((await page.$eval(`input[data-act="parMin"][data-key="${milkKey}"]`, (el) => el.value)) === '30',
+      'reset row returns to the scaled default (30 @ 50 people)');
+    ok(!(await page.$eval(`input[data-act="parMin"][data-key="${milkKey}"]`, (el) => el.classList.contains('manual'))),
+      'reset row loses the ידני highlight');
+
+    // stock-min reset: set an override, then reset it from the מלאי tab
+    await page.fill(`input[data-act="parMin"][data-key="${milkKey}"]`, '9');
+    await waitFor(() => db.houses[0].parOverrides && db.houses[0].parOverrides[milkKey] && Number(db.houses[0].parOverrides[milkKey].min) === 9, 'min override set');
+    await page.click('[data-tab="stock"]');
+    await page.waitForSelector('input[data-act="stkName"]');
+    ok(!!(await page.$(`button[data-act="stkResetMin"][data-key="${milkKey}"]`)), 'מלאי shows a reset for a manually-overridden min');
+    await page.click(`button[data-act="stkResetMin"][data-key="${milkKey}"]`);
+    await waitFor(() => !(db.houses[0].parOverrides && db.houses[0].parOverrides[milkKey]), 'stock-min reset cleared the override');
+    ok(true, 'per-row מלאי reset clears the min override');
+
+    // bulk reset: set two overrides, then clear all with confirm
+    await page.click('[data-tab="baseline"]');
+    await page.waitForSelector('.baseline-total');
+    await page.fill(`input[data-act="parMin"][data-key="${milkKey}"]`, '8');
+    await page.fill(`input[data-act="parMin"][data-key="${riceKey2}"]`, '7');
+    await waitFor(() => db.houses[0].parOverrides && db.houses[0].parOverrides[milkKey] && db.houses[0].parOverrides[riceKey2], 'two overrides set');
+    await page.click('button[data-act="parResetAll"]');
+    await waitFor(() => !Object.keys(db.houses[0].parOverrides || {}).length, 'bulk reset cleared all overrides');
+    ok(true, 'אפס הכל לברירת מחדל clears every override for the house');
+
     /* ---- adopt the baseline as the monthly budget ---- */
     await page.click('[data-tab="budget"]');
     await page.waitForSelector('[data-act="adoptBaseline"]');
