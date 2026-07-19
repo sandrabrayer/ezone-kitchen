@@ -188,6 +188,9 @@ function seedList() {
   return Array.isArray(KD.SEED_CATALOG) ? KD.SEED_CATALOG : [];
 }
 const catalogSig = (cat) => cat.map((c) => KD.catalogKey(c.name)).sort().join('|');
+// A fuller signature (name + unit + category) so unit/category CORRECTIONS —
+// not just added/removed names — trigger a one-time persist that heals the Sheet.
+const catalogFullSig = (cat) => cat.map((c) => KD.catalogKey(c.name) + '|' + KD.safeUnit(c.unit) + '|' + (KD.isCategory(c.category) ? c.category : 'groceries')).sort().join(',');
 
 /* ============================ load ============================ */
 async function loadState() {
@@ -199,8 +202,11 @@ async function loadState() {
   // throws below — otherwise the datalists silently fall back to user-only items
   // (the bug this fixes). Priority: backend catalog > seed defaults.
   const backendCatalog = Array.isArray(d.catalog) ? d.catalog : [];
-  const backendSig = catalogSig(KD.mergeCatalog(backendCatalog, []));
-  state.catalog = KD.mergeCatalog(backendCatalog, seedList());
+  // The RAW backend catalog (normalised) — compared below so a corrected catalog
+  // is persisted back once, then converges (idempotent, self-healing).
+  const backendSig = catalogFullSig(KD.mergeCatalog(backendCatalog, []));
+  // Seed + CORRECT (fix stale units/categories, rename typos, drop duplicates).
+  state.catalog = KD.correctCatalog(KD.mergeCatalog(backendCatalog, seedList()));
 
   const catalogSeed = []; // names discovered in stock + menus, merged in below
   for (const h of state.houses) {
@@ -213,12 +219,18 @@ async function loadState() {
     }
   }
 
-  // Merge names discovered in stock/menus on top of (backend + seed). `min`
-  // defaults always come from the domain seed, so the catalog tab need not store
-  // them. Persist only when the NAME SET changed vs the backend (re-derived mins
-  // never trigger a write, so this self-heals idempotently).
-  state.catalog = KD.mergeCatalog(state.catalog, catalogSeed);
-  if (catalogSig(state.catalog) !== backendSig) persist.catalog();
+  // Merge names discovered in stock/menus, then re-correct so nothing a house
+  // contributed reintroduces a typo/duplicate/stale unit. Persist when the
+  // corrected catalog differs from the backend (name OR unit/category), so the
+  // Sheet heals once and then stays stable.
+  state.catalog = KD.correctCatalog(KD.mergeCatalog(state.catalog, catalogSeed));
+  if (catalogFullSig(state.catalog) !== backendSig) persist.catalog();
+
+  // Persist any house whose stock was migrated (eggs merge / typo rename) so the
+  // fix is durable in the Sheet, not re-applied on every load.
+  for (const h of state.houses) {
+    if (h._stockMigrated) { delete h._stockMigrated; persist.stock(h); }
+  }
 
   // Keep the current house if it still exists, else default to the first.
   if (!state.houses.some((h) => h.id === state.activeHouseId)) {
@@ -232,6 +244,11 @@ function normaliseHouse(h, catalogSeed) {
   h.headcount = h.headcount || KD.emptyHeadcount();
   h.allergies = Array.isArray(h.allergies) ? h.allergies : [];
   h.stock = (Array.isArray(h.stock) ? h.stock : []).map(normStock);
+  // Fold historical duplicates/typos (בצים→ביצים, עכבניות→עגבניות) into their
+  // canonical item, merging quantities. Flag a change so loadState persists it.
+  const stockBefore = JSON.stringify(h.stock);
+  h.stock = KD.correctStock(h.stock);
+  if (JSON.stringify(h.stock) !== stockBefore) h._stockMigrated = true;
   h.purchases = Array.isArray(h.purchases) ? h.purchases : [];
   h.consumption = Array.isArray(h.consumption) ? h.consumption : []; // served-day markers
   h.stockCounts = Array.isArray(h.stockCounts) ? h.stockCounts : []; // dated snapshots
@@ -377,6 +394,20 @@ function emptyState(icon, title, hint) {
     <div class="empty-title">${esc(title)}</div>
     ${hint ? `<div class="empty-hint">${esc(hint)}</div>` : ''}
   </div>`;
+}
+
+/* The three-step pantry flow, shown as a one-line hint atop the מלאי / ספירה /
+   קניות tabs so cooks see the chain: count what you have → set what you need →
+   buy what's missing. `step` (1-3) is emphasised for the current tab. */
+function flowHint(step) {
+  const steps = [
+    { n: 1, label: 'ספירת מלאי', sub: 'מה יש' },
+    { n: 2, label: 'מלאי מינימום', sub: 'מה צריך' },
+    { n: 3, label: 'רשימת קניות', sub: 'מה חסר' },
+  ];
+  const parts = steps.map((s) =>
+    `<span class="flow-step${s.n === step ? ' on' : ''}"><b>${s.n}</b> ${esc(s.label)} <small>${esc(s.sub)}</small></span>`);
+  return `<div class="flow-hint no-print" role="note" aria-label="שלבי העבודה">${parts.join('<span class="flow-arr" aria-hidden="true">←</span>')}</div>`;
 }
 
 function allergyBanner(house) {
@@ -649,6 +680,7 @@ function renderStock(house) {
 
   return `<div class="card">
     ${categoryComboDatalists()}
+    ${flowHint(1)}
     <div class="row between">
       <h2 style="margin:0">מלאי — ${esc(house.name)}</h2>
       <button class="primary" data-act="countStart">📋 ספירת מלאי</button>
@@ -686,9 +718,8 @@ function renderStockCount(house) {
       const unit = KD.safeUnit(r.unit);
       const edited = Object.prototype.hasOwnProperty.call(state.countValues, r.key);
       const val = edited ? state.countValues[r.key] : r.qty;
-      const inStock = r.id != null;
       return `<tr>
-        <td>${esc(r.name)}${inStock ? '' : ' <span class="tag muted" title="עדיין לא במלאי">חדש</span>'}</td>
+        <td>${esc(r.name)}</td>
         <td class="muted">${esc(KD.UNIT_LABELS_HE[unit])}</td>
         <td><input type="number" min="0" step="${qtyStep(unit)}" value="${val || ''}" placeholder="0" data-act="countQty" data-key="${esc(r.key)}" style="width:90px" /></td>
       </tr>`;
@@ -698,11 +729,12 @@ function renderStockCount(house) {
   }).join('');
 
   return `<div class="card">
+    ${flowHint(1)}
     <div class="row between">
       <h2 style="margin:0">ספירת מלאי — ${esc(house.name)}</h2>
       <label class="muted">תאריך: <input type="date" value="${esc(date)}" data-act="countDate" /></label>
     </div>
-    <p class="muted">ספירה מלאה של כל פריטי הקטלוג (${allRows.length}) לפי קטגוריה. עדכנו כמות לכל פריט: פריט שנספר ואינו במלאי — יתווסף; פריט שיישאר 0 יהיה 0. השמירה מעדכנת את המלאי ושומרת צילום מצב בתאריך זה.</p>
+    <p class="muted">פשוט: <strong>סִפרו מה שיש</strong>. עברו על כל הפריטים (${allRows.length}) ורשמו כמות לכל אחד; מה שאין — השאירו 0. עם השמירה כל הפריטים נשמרים במלאי (גם ריקים), ונשמר צילום מצב בתאריך זה.</p>
     ${allRows.length ? sections : '<p class="muted">אין פריטים בקטלוג. הוסיפו פריטים תחילה.</p>'}
     <div class="row" style="margin-top:.8rem">
       <button class="primary" data-act="countSave">✓ שמור ספירה</button>
@@ -712,11 +744,11 @@ function renderStockCount(house) {
 }
 
 /* ------------------------ Weekly plan view ------------------------ */
-/* Short-term planning at a glance: every ingredient needed across the week (or
-   from today onward) vs current stock, with the shortfall to buy. Reuses
-   buildShoppingList (aggregation + name/unit-family stock matching) — the only
-   difference from the shopping list is that it shows the RAW weekly need
-   (no purchasing buffer) and its "חסר" = max(0, needed − stock). */
+/* צפי — "השוואת תפריט מול מלאי". Two explanatory sections (KD.weeklyPlan):
+     • the menu comparison: every ingredient the week's menu needs vs stock;
+     • "השלמה למלאי מינימום": items NOT in the menu but below their par, so a
+       cook sees WHY each of those lands on the shopping list.
+   When the week has no menu at all, a friendly message replaces the table. */
 function renderPlan(house) {
   const weekOf = state.currentWeekOf;
   const week = (house.weeks && house.weeks[weekOf]) || KD.emptyWeekMenu(weekOf);
@@ -725,47 +757,58 @@ function renderPlan(house) {
   const daysRemaining = 7 - todayIdx;   // days left in the week, including today
   const fromToday = state.planFromToday;
   const days = fromToday ? KD.DAYS.slice(todayIdx) : KD.DAYS;
-  const list = KD.buildShoppingList(week, house.stock, undefined, days);
+  const plan = KD.weeklyPlan(week, house.stock, days);
+  const needLabel = fromToday ? 'נדרש (מהיום)' : 'נדרש לשבוע';
 
-  // חסר reflects BOTH the raw menu need and the minimum (par) top-up: the larger
-  // gap between stock and what we should hold. (Matches the shopping-list rule,
-  // minus the purchasing buffer.)
-  const planMissing = (line) => Math.max(
-    KD.subtractStock(line.requiredQty, line.stockQty),
-    KD.subtractStock(line.minQty, line.stockQty),
-  );
-  const rows = list.lines.map((line) => {
-    const missing = planMissing(line);
-    const short = missing > 0;
+  const menuRows = plan.menu.map((line) => {
+    const short = line.missing > 0;
     return `<tr class="${short ? 'plan-short' : ''}">
       <td>${esc(line.name)}</td>
       <td class="num">${fmtQty(line.requiredQty, line.unit)}</td>
-      <td class="num muted">${line.minQty > 0 ? fmtQty(line.minQty, line.unit) : '—'}</td>
       <td class="num muted">${fmtQty(line.stockQty, line.unit)}</td>
-      <td class="num ${short ? 'over' : 'under'}">${short ? fmtQty(missing, line.unit) : '—'}</td>
+      <td class="num ${short ? 'over' : 'under'}">${short ? fmtQty(line.missing, line.unit) : '—'}</td>
     </tr>`;
   }).join('');
-  const shortCount = list.lines.filter((l) => planMissing(l) > 0).length;
-  const needLabel = fromToday ? 'נדרש (מהיום)' : 'נדרש לשבוע';
+
+  const menuSection = plan.menuEmpty
+    ? emptyState('🍽️', 'עדיין לא הוזן תפריט לשבוע זה', 'מלאו את התפריט לכל ימי השבוע כדי לראות מה נדרש מול המלאי.')
+    : `<table>
+        <thead><tr><th>פריט</th><th>${needLabel}</th><th>קיים במלאי</th><th>חסר</th></tr></thead>
+        <tbody>${menuRows}</tbody>
+      </table>
+      <p class="muted" style="margin-top:.6rem">${plan.menu.some((l) => l.missing > 0)
+        ? `⚠️ ${plan.menu.filter((l) => l.missing > 0).length} מרכיבים חסרים ביחס לתפריט`
+        : '✓ המלאי מכסה את כל צורכי התפריט'}</p>`;
+
+  const parRows = plan.parTopUp.map((line) => `<tr class="plan-short">
+      <td>${esc(line.name)}</td>
+      <td class="num muted">${fmtQty(line.minQty, line.unit)}</td>
+      <td class="num muted">${fmtQty(line.stockQty, line.unit)}</td>
+      <td class="num over">${fmtQty(line.missing, line.unit)}</td>
+    </tr>`).join('');
+  const parSection = plan.parTopUp.length ? `<div class="card">
+      <h3 style="margin:0 0 .3rem">השלמה למלאי מינימום</h3>
+      <p class="muted">פריטים שאינם בתפריט השבוע אך מתחת למלאי המינימום — לכן הם נכנסים לרשימת הקניות.</p>
+      <table>
+        <thead><tr><th>פריט</th><th>מינימום</th><th>קיים במלאי</th><th>חסר</th></tr></thead>
+        <tbody>${parRows}</tbody>
+      </table>
+    </div>` : '';
 
   return `${allergyBanner(house)}
     <div class="card">
       <div class="row between">
-        <h2 style="margin:0">צפי שבועי — ${esc(house.name)}</h2>
+        <h2 style="margin:0">צפי שבועי — השוואת תפריט מול מלאי</h2>
         ${isThisWeek ? `<span class="pill">נותרו ${daysRemaining} ימים</span>` : ''}
       </div>
-      <p class="muted">שבוע ${esc(KD.formatDateHe(weekOf))} · מה נדרש מול המלאי הקיים (כולל השלמה למלאי מינימום).</p>
+      <p class="muted">לאחר מילוי התפריטים לכל השבוע: ריכוז כל המרכיבים הנדרשים, מול מה שקיים במלאי. <span class="muted">(שבוע ${esc(KD.formatDateHe(weekOf))})</span></p>
       <div class="subtabs">
         <button data-act="planScope" data-scope="week" aria-current="${!fromToday}">כל השבוע</button>
         <button data-act="planScope" data-scope="today" aria-current="${fromToday}">מהיום והלאה</button>
       </div>
-      ${list.lines.length ? `<table>
-        <thead><tr><th>פריט</th><th>${needLabel}</th><th>מינימום</th><th>במלאי</th><th>חסר (לקנייה)</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      <p class="muted" style="margin-top:.6rem">${shortCount ? `⚠️ ${shortCount} פריטים חסרים במלאי` : '✓ המלאי מכסה את כל הצרכים'}</p>`
-      : emptyState('📊', 'אין מה לתכנן', 'הוסיפו מנות לתפריט השבוע כדי לראות צפי.')}
-    </div>`;
+      ${menuSection}
+    </div>
+    ${parSection}`;
 }
 
 /* ------------------------ Shopping list view ------------------------ */
@@ -811,6 +854,7 @@ function renderShopping(house) {
   const nothing = list.lines.every((l) => l.toBuyQty === 0);
   return `${allergyBanner(house)}
     ${catalogDatalist()}
+    ${flowHint(3)}
     <div class="screen-head shop-head no-print">
       <div class="screen-title"><h2>רשימת קניות</h2>
         <span class="muted">שבוע ${esc(KD.formatDateHe(weekOf))} · כולל תוספת ${pct}% · בניכוי מלאי</span></div>

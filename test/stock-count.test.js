@@ -97,7 +97,7 @@ test('applyStockCount adds a catalog item counted > 0 that was not in stock', ()
   assert.equal(next.find((s) => s.name === 'Rice').qty, 2);
 });
 
-test('applyStockCount leaves uncounted catalog items out; keeps existing at 0', () => {
+test('applyStockCount writes EVERY item, keeping 0-qty items in the pantry list', () => {
   const stock = [{ id: 's1', name: 'Rice', category: 'dry', qty: 2, unit: 'kg', minQty: 4 }];
   const riceKey = KD.catalogKey('Rice');
   const next = KD.applyStockCount(CATALOG, stock, { [riceKey]: 0 });
@@ -105,7 +105,13 @@ test('applyStockCount leaves uncounted catalog items out; keeps existing at 0', 
   assert.ok(rice, 'an item already in stock counted 0 stays in the list at 0');
   assert.equal(rice.qty, 0);
   assert.equal(rice.id, 's1'); // same row
-  assert.equal(next.find((s) => s.name === 'Milk'), undefined); // not in stock, left 0 → omitted
+  // Every catalog item now exists in stock, including those left at 0.
+  const milk = next.find((s) => s.name === 'Milk');
+  assert.ok(milk, 'a catalog item left at 0 is still written to stock (empty pantry row)');
+  assert.equal(milk.qty, 0);
+  assert.equal(milk.unit, 'l');
+  assert.equal(milk.minQty, 15);
+  assert.equal(next.length, 3); // Rice + Milk + Onion — the whole catalog
 });
 
 test('applyStockCount is a full pantry summary and preserves free-text items', () => {
@@ -115,7 +121,8 @@ test('applyStockCount is a full pantry summary and preserves free-text items', (
   const next = KD.applyStockCount(CATALOG, stock, { [riceKey]: 5, [eggsKey]: 24 });
   assert.equal(next.find((s) => s.name === 'Eggs').qty, 24); // free-text item recounted
   assert.equal(next.find((s) => s.name === 'Rice').qty, 5); // catalog item added
-  assert.equal(next.find((s) => s.name === 'Milk'), undefined); // untouched, not in stock
+  assert.equal(next.find((s) => s.name === 'Milk').qty, 0); // untouched catalog item → 0 row
+  assert.equal(next.length, 4); // Rice + Milk + Onion + Eggs (free-text)
 });
 
 test('applyStockCount does not mutate the input stock', () => {

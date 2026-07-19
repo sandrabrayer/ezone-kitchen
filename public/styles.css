@@ -409,6 +409,24 @@ input.over { color: var(--danger); font-weight: 800; }
 .cat-dry { background: var(--cat-dry); }
 .cat-extra { background: var(--brand); }
 
+/* Three-step flow hint (ספירה → מינימום → קניות) atop the pantry tabs */
+.flow-hint {
+  display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap;
+  margin: 0 0 0.7rem; padding: 0.45rem 0.6rem;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); font-size: 0.82rem; color: var(--muted);
+}
+.flow-step { display: inline-flex; align-items: baseline; gap: 0.3rem; white-space: nowrap; }
+.flow-step b {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.15rem; height: 1.15rem; border-radius: 50%;
+  background: var(--border-strong); color: #fff; font-size: 0.72rem;
+}
+.flow-step small { opacity: 0.8; }
+.flow-step.on { color: var(--brand-strong); font-weight: 800; }
+.flow-step.on b { background: var(--brand); }
+.flow-arr { color: var(--border-strong); font-weight: 700; }
+
 /* פריטים נוספים — the manual add row on the shopping list */
 .shop-extras .extra-item { cursor: default; }
 .extra-add { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.6rem; flex-wrap: wrap; }
