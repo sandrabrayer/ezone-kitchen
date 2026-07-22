@@ -598,3 +598,29 @@ td.stk-min.over { color: var(--danger); font-weight: 800; }
   .shop-name { font-weight: 600; }
   .shop-qty { color: #000; font-size: 13pt; }
 }
+
+/* ---- loading / skeleton states (overview + boot) ---- */
+.row.between { display: flex; align-items: center; justify-content: space-between; gap: .6rem; flex-wrap: wrap; }
+.loading-card { text-align: center; padding: 2rem 1rem; }
+.spinner {
+  width: 34px; height: 34px; margin: 0 auto .6rem; border-radius: 50%;
+  border: 3px solid var(--border); border-top-color: var(--brand);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.skeleton {
+  display: inline-block; border-radius: 6px;
+  background: linear-gradient(90deg, var(--surface-2) 25%, var(--border) 37%, var(--surface-2) 63%);
+  background-size: 400% 100%; animation: shimmer 1.3s ease infinite;
+}
+@keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+.skeleton-line { display: block; height: 14px; margin: .5rem auto; width: 80%; max-width: 420px; }
+.skeleton-line.short { width: 45%; }
+.skeleton-text { height: 13px; width: 70%; }
+.skeleton-pill { height: 13px; width: 3.2rem; }
+.skeleton-row td { padding-block: .55rem; }
+.loading-note { color: var(--brand-strong); font-weight: 700; }
+.err-note { color: #b23b2e; }
+@media (prefers-reduced-motion: reduce) {
+  .spinner, .skeleton { animation: none; }
+}

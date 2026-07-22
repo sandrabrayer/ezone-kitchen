@@ -73,6 +73,7 @@ function doPost(e) {
     try {
       switch (action) {
         case 'load': result = loadAll_(); break;
+        case 'loadOverview': result = loadOverview_(body.month); break;
         case 'saveHouse': result = saveHouse_(body.house); break;
         case 'saveHeadcount': result = saveHeadcount_(body.houseId, body.headcount); break;
         case 'saveAllergies': result = replaceForHouse_('allergies', body.houseId, (body.allergies || []).map(function (a) {
@@ -357,6 +358,46 @@ function loadAll_() {
   });
   return { ok: true, houses: out, catalog: catalog };
 }
+
+// Lightweight batched summary for the "כל הבתים" overview: ONE call returns every
+// house's budget / approved-overrun / actual-spend / base diners for `month`.
+// Reads only the four small tabs it needs (NOT stock/menus/counts JSON blobs), so
+// it is far cheaper than loadAll_ — the overview no longer waits on a full load.
+// `remaining` / over-budget are derived on the client (summariseBudget) so that
+// rule stays in one place.
+function loadOverview_(month) {
+  seedHousesIfEmpty_();
+  var mk = normMonth_(month);
+  var houses = readRows_('houses');
+  var monthlyBudgets = groupBy_(readRows_('monthlyBudgets'), 'houseId');
+  var purchases = groupBy_(readRows_('purchases'), 'houseId');
+  var headcount = indexBy_(readRows_('headcount'), 'houseId');
+  var rows = houses.map(function (h) {
+    var id = String(h.id);
+    var budget = 0, overrun = 0;
+    (monthlyBudgets[id] || []).forEach(function (b) {
+      if (normMonth_(b.month) === mk) { budget = num_(b.budget); overrun = num_(b.overrun); }
+    });
+    var actual = 0;
+    (purchases[id] || []).forEach(function (p) {
+      if (normMonth_(p.date) === mk) { var a = num_(p.amount); if (a > 0) actual += a; }
+    });
+    var hc = headcount[id];
+    var diners = hc ? (nonNeg_(hc.basePatients) + nonNeg_(hc.baseStaff)) : 0;
+    return { id: id, name: h.name || '', month: mk, budget: budget, overrun: overrun, actual: round2_(actual), diners: diners };
+  });
+  return { ok: true, month: mk, houses: rows };
+}
+
+// 'YYYY-MM' key from a Date-ish string; '' if unparseable. Mirrors
+// KitchenDomain.normMonth so the overview and the client agree on the key.
+function normMonth_(v) {
+  var s = String(v == null ? '' : v).trim();
+  var m = /^(\d{4})-(\d{2})/.exec(s);
+  return m ? (m[1] + '-' + m[2]) : '';
+}
+function nonNeg_(v) { var n = Math.floor(num_(v)); return n > 0 ? n : 0; }
+function round2_(n) { return Math.round((num_(n) + Number.EPSILON) * 100) / 100; }
 
 /* --------------------------- small utils --------------------------- */
 function json_(obj) {

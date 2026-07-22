@@ -9,6 +9,33 @@ const path = require('node:path');
 // This locks in the row-cleanup requirements so they can't silently regress.
 const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 
+test('overview (כל הבתים) is optimistic + refreshable, never renders ₪0 as loading', () => {
+  // batched, refreshable data path
+  assert.match(app, /function refreshOverview/, 'overview refresh function');
+  assert.match(app, /api\('loadOverview', \{ month \}\)/, 'uses the batched loadOverview endpoint');
+  assert.match(app, /KD\.houseMonthRaw\(h, month\)/, 'falls back to a local compute on error');
+  assert.match(app, /KD\.normMonth\(/, 'overview uses the shared month-key normaliser');
+  // loading ≠ zero: skeletons + a boot loading state
+  assert.match(app, /function overviewSkeletonRows/, 'per-row skeletons');
+  assert.match(app, /function loadingState/, 'boot loading state');
+  assert.match(app, /if \(!state\.dataLoaded\) \{ screen\.innerHTML = loadingState\(\)/, 'render shows loading until data arrives');
+  assert.match(app, /class="skeleton/, 'skeleton markup present');
+  // refresh button + auto-refresh on tab entry and month change
+  assert.match(app, /data-act="refreshOverview"/, 'manual refresh button');
+  assert.match(app, /state\.tab === 'admin'\) refreshOverview/, 'auto-refresh on admin entry / month change');
+  // display rule stays single-sourced through summariseBudget
+  assert.match(app, /KD\.summariseBudget\(raw\.budget, raw\.actual, raw\.overrun\)/, 'overview rows go through summariseBudget');
+});
+
+test('daily overrides (חריגות יומיות) update סה"כ אפקטיבי instantly (optimistic)', () => {
+  assert.match(app, /function updateOverrideRow/, 'per-row optimistic update helper');
+  assert.match(app, /data-hc-day="\$\{day\}"/, 'override rows are addressable by day');
+  assert.match(app, /class="hc-eff-total"/, 'the effective-total cell is targetable');
+  assert.match(app, /case 'ovP': case 'ovS':[^]*?updateOverrideRow\(house, t\.dataset\.day\)/, 'ovP/ovS paint the row instantly, before any save');
+  // instant local compute — no awaiting the network for the number
+  assert.match(app, /updateOverrideRow[^]*?KD\.effectiveForDay\(house\.headcount, day\)\.total/, 'row total recomputed locally');
+});
+
 test('menu ingredient rows have no orphan category box (the truncated "מכו…")', () => {
   assert.ok(!/ing-cat/.test(app), 'the per-row category <select> (.ing-cat) must be gone');
   assert.ok(!/data-act="ingCat"/.test(app), 'the ingCat handler must be gone');

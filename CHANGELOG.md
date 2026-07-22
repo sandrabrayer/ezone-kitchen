@@ -7,6 +7,58 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Fixed — slow updates that looked broken: overview ₪0 + daily-occupancy lag (optimistic UI)
+
+Two "did it even work?" moments on slow Apps Script round-trips, fixed with an
+optimistic-UI pattern: **the UI updates from local state instantly and never
+shows ₪0 as a stand-in for "loading."**
+
+**A. "כל הבתים" overview no longer flashes ₪0.00.**
+- **Loading ≠ zero.** A new `loadingState()` (spinner + "טוען…" + skeleton lines)
+  renders until the initial load resolves (`state.dataLoaded`), and the overview
+  shows per-row **skeletons** while it has nothing real yet — never a zeroed table.
+- **Optimistic + refreshable.** The overview renders from a **local compute**
+  (`KD.houseMonthRaw` over already-loaded state) the moment data exists — real
+  numbers, instantly, reflecting this session's edits. A new **↻ רענן** button and
+  **auto-refresh on tab entry / month change** pull fresh figures from a light
+  **batched `loadOverview` endpoint** (`apps-script/Code.gs`) that reads only the
+  four small tabs it needs (houses / monthlyBudgets / purchases / headcount) — far
+  cheaper than the full `load`. A stale-token guard drops out-of-order responses;
+  on failure it **falls back to the local compute** rather than blanking.
+- **No stale-over-fresh.** A house with a pending (debounced) save keeps its
+  **optimistic local row** on refresh (`hasPendingSave`), so a just-edited number
+  never briefly reverts to the server's old value.
+- **Month-key consistency.** A single shared `KD.normMonth()` normaliser is used by
+  the overview, the תקציב tab and the backend endpoint, and `houseMonthRaw`
+  tolerates a stored budget key that isn't exactly normalised — the fix for a
+  subtle key mismatch silently showing ₪0. `actualSpendForMonth` normalises its
+  month arg too.
+
+**B. Daily overrides (חריגות יומיות) reflect instantly.**
+- Typing a day's מטופלים/צוות now repaints that row's **סה"כ אפקטיבי immediately**
+  from a local compute (`updateOverrideRow` → `KD.effectiveForDay`), with the
+  debounced background save + focus retention from the previous change. No reload,
+  no waiting on the network for the number to move.
+
+- **Apps Script**: adds one **new read action** `loadOverview` — a **redeploy is
+  required**, handled by **clasp CI on merge** (the workflow fires on merges that
+  touch `apps-script/**`; the `/exec` URL is unchanged).
+- **Security**: the batched-endpoint response is **sanitised at the trust boundary**
+  (every numeric field coerced; `name`/`id` stay `esc()`-escaped on render), so a
+  bad backend value can neither poison the math nor render as markup;
+  `houseMonthRaw` skips prototype-polluting budget keys; the overview endpoint is a
+  read behind the same server-injected shared secret. The optimistic DOM updates
+  render numeric/`esc()`-escaped content only.
+- **Tests**: `test/overview.test.js` — `normMonth` (Date / YYYY-MM / full ISO /
+  junk), overview↔budget key agreement, `houseMonthRaw` shape + month-key
+  tolerance + 0-not-undefined + proto-key safety, and `summariseBudget` over the row
+  (real over-budget, not a zero stand-in). `test/frontend-shape.test.js` — the
+  optimistic overview wiring (batched fetch + local fallback, skeletons, boot
+  loading state, refresh button, auto-refresh) and the instant daily-override
+  repaint. Browser smoke: the overview shows real ₪ for a seeded month (never
+  ₪0.00), stays real through a refresh (מרענן… indicator), and a daily override
+  paints סה"כ אפקטיבי instantly.
+
 ### Fixed — תפוסה edits now update dependent views live (no page reload)
 
 **Symptom:** after editing the תפוסה base inputs (מטופלים בסיס / אנשי צוות בסיס),
