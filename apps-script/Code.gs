@@ -9,7 +9,7 @@
  * One tab per entity — created automatically on first use:
  *   houses         id | name
  *   budget         houseId | monthlyBudget                 (legacy single budget)
- *   monthlyBudgets houseId | month | budget | overrun | overrunNote   (per month)
+ *   monthlyBudgets houseId | month | budget | overrun | overrunNote | instructorsBudget   (per month)
  *   headcount      houseId | basePatients | baseStaff | overridesJson
  *   allergies      id | houseId | name | count
  *   stock          id | houseId | name | category | qty | unit | min
@@ -36,7 +36,7 @@
 var SHEETS = {
   houses: ['id', 'name'],
   budget: ['houseId', 'monthlyBudget'],
-  monthlyBudgets: ['houseId', 'month', 'budget', 'overrun', 'overrunNote'],
+  monthlyBudgets: ['houseId', 'month', 'budget', 'overrun', 'overrunNote', 'instructorsBudget'],
   headcount: ['houseId', 'basePatients', 'baseStaff', 'overridesJson'],
   allergies: ['id', 'houseId', 'name', 'count'],
   stock: ['id', 'houseId', 'name', 'category', 'qty', 'unit', 'min'],
@@ -272,13 +272,21 @@ function saveParOverrides_(houseId, overrides) {
   return { ok: true };
 }
 
-// Per-month budget + approved overrun. Upsert by (houseId, month).
+// Per-month budget + approved overrun + a separate מדריכים (instructors) budget.
+// Upsert by (houseId, month). All amounts are validated non-negative; an
+// instructors budget larger than the total is allowed (a warning, not an error)
+// so a house may over-commit its instructor line. Back-compat: a caller that
+// omits instructorsBudget stores 0 and the total keeps its meaning.
 function saveBudget_(houseId, month, budget) {
   if (!houseId || !month) return { ok: false, error: 'houseId & month required' };
   budget = budget || {};
+  var total = nonNeg_(budget.budget);
+  var instructors = nonNeg_(budget.instructorsBudget);
+  var warnings = [];
+  if (instructors > total && total > 0) warnings.push('instructors_over_total');
   upsertRow_('monthlyBudgets', ['houseId', 'month'], [houseId, month],
-    [houseId, String(month), num_(budget.budget), num_(budget.overrun), String(budget.overrunNote || '')]);
-  return { ok: true };
+    [houseId, String(month), total, nonNeg_(budget.overrun), String(budget.overrunNote || ''), instructors]);
+  return { ok: true, warnings: warnings };
 }
 
 // The five real houses, with fixed human-readable ids and Hebrew display names.
@@ -330,7 +338,12 @@ function loadAll_() {
     });
     var budgets = {};
     (monthlyBudgets[id] || []).forEach(function (b) {
-      budgets[String(b.month)] = { budget: num_(b.budget), overrun: num_(b.overrun), overrunNote: String(b.overrunNote || '') };
+      budgets[String(b.month)] = {
+        budget: nonNeg_(b.budget),
+        overrun: nonNeg_(b.overrun),
+        overrunNote: String(b.overrunNote || ''),
+        instructorsBudget: nonNeg_(b.instructorsBudget)
+      };
     });
     var extras = {};
     (shoppingExtras[id] || []).forEach(function (e) {
@@ -363,6 +376,9 @@ function json_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 function num_(v) { var n = Number(v); return isFinite(n) ? n : 0; }
+// Non-negative amount: invalid or negative values (which a budget can never be)
+// clamp to 0. Budget figures are always ≥ 0.
+function nonNeg_(v) { var n = Number(v); return isFinite(n) && n > 0 ? n : 0; }
 function uid_(prefix) { return prefix + '_' + Utilities.getUuid(); }
 function safeParse_(s, fallback) { try { return JSON.parse(s); } catch (e) { return fallback; } }
 function indexBy_(rows, key) {

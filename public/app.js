@@ -118,12 +118,17 @@ function activeHouse() {
   return state.houses.find((h) => h.id === state.activeHouseId) || state.houses[0] || null;
 }
 
-/* The per-month budget record { budget, overrun, overrunNote } for a house,
-   created lazily. Each month keeps its own figures. */
+/* The per-month budget record { budget, overrun, overrunNote, instructorsBudget }
+   for a house, created lazily. Each month keeps its own figures. `budget` is the
+   TOTAL monthly food budget; `instructorsBudget` is the separate מדריכים line
+   (0 when unset — back-compat with pre-split records). */
 function budgetForMonth(house, month) {
   if (!house.budgets) house.budgets = {};
-  if (!house.budgets[month]) house.budgets[month] = { budget: 0, overrun: 0, overrunNote: '' };
-  return house.budgets[month];
+  if (!house.budgets[month]) house.budgets[month] = { budget: 0, overrun: 0, overrunNote: '', instructorsBudget: 0 };
+  const b = house.budgets[month];
+  // Heal a record stored before the split: ensure the instructors line exists.
+  if (b.instructorsBudget == null) b.instructorsBudget = 0;
+  return b;
 }
 
 /* Stock with each item's par replaced by its EFFECTIVE (scaled/override) par —
@@ -286,6 +291,12 @@ function normaliseHouse(h, catalogSeed) {
   h.shoppingExtras = normaliseExtras(h.shoppingExtras); // per-week manual list items
   h.parOverrides = normaliseParOverrides(h.parOverrides); // per-item par/price overrides
   h.budgets = (h.budgets && typeof h.budgets === 'object') ? h.budgets : {};
+  // Ensure every stored month carries the instructors line (0 when pre-split).
+  for (const mk of Object.keys(h.budgets)) {
+    const rec = h.budgets[mk];
+    if (rec && typeof rec === 'object' && rec.instructorsBudget == null) rec.instructorsBudget = 0;
+  }
+  h.workers = Array.isArray(h.workers) ? h.workers : []; // instructor-cost source (role מדריך)
   h.weeks = (h.weeks && typeof h.weeks === 'object') ? h.weeks : {};
   // Legacy single monthlyBudget → migrate into the current month if unset.
   const legacy = typeof h.monthlyBudget === 'number' ? h.monthlyBudget
@@ -1155,9 +1166,11 @@ function renderBudget(house) {
       </div>
       <div class="row" style="flex-wrap:wrap;gap:1rem">
         <label class="muted">תקציב חודשי (₪): <input type="text" inputmode="decimal" value="${esc(KD.groupThousands(b.budget))}" data-act="budgetAmount" style="width:120px" /></label>
+        <label class="muted">תקציב מדריכים ₪: <input type="text" inputmode="decimal" value="${b.instructorsBudget ? esc(KD.groupThousands(b.instructorsBudget)) : ''}" placeholder="0" data-act="instructorsBudgetAmount" style="width:120px" /></label>
         <label class="muted">חריגה מאושרת (₪): <input type="text" inputmode="decimal" value="${b.overrun ? esc(KD.groupThousands(b.overrun)) : ''}" placeholder="0" data-act="overrunAmount" style="width:110px" /></label>
         <label class="muted" style="flex:1;min-width:180px">הערת חריגה: <input value="${esc(b.overrunNote || '')}" placeholder="סיבת האישור (לא חובה)" data-act="overrunNote" style="width:100%" /></label>
       </div>
+      <p class="warn-instructors" id="instructorsWarn" style="margin:.2rem 0 0;font-size:.82rem;color:var(--danger);${b.instructorsBudget > b.budget && b.budget > 0 ? '' : 'display:none'}">תקציב המדריכים גבוה מהתקציב החודשי הכולל</p>
       <div class="stat-grid stat-grid-4">
         <div class="stat"><div class="label">תקציב</div><div class="value num" id="tileBudget">${fmtCurrency(summary.budget)}</div></div>
         <div class="stat"><div class="label">חריגה מאושרת</div><div class="value num" id="tileOverrun">${fmtCurrency(summary.overrun)}</div></div>
@@ -1207,6 +1220,29 @@ function updateBudgetTiles(house) {
   set('tileRemaining', fmtCurrency(s.remaining), s.overBudget);
 }
 
+/* An indented "מדריכים" sub-row under a house row in the budget-vs-cost table.
+   Shown only for houses that have an instructors budget for the month. The
+   actual instructor cost is the sum of the house's מדריך workers' costs — the
+   recorded monthly actuals when present, otherwise an estimate flagged with the
+   אומדן badge (falling back to the instructors budget when no worker data
+   exists). Columns mirror the house row: name, ניצול %, budget, cost, יתרה/חריגה. */
+function instructorSubRow(house, b, month) {
+  const iBudget = b.instructorsBudget || 0;
+  if (!(iBudget > 0)) return '';
+  const ic = KD.instructorCostForMonth(house.workers, month, iBudget);
+  const s = KD.summariseBudget(iBudget, ic.cost, 0);
+  const pct = KD.utilisationPct(ic.cost, iBudget);
+  const statusLabel = s.overBudget ? 'חריגה' : 'תקין';
+  return `<tr class="subrow instructors">
+      <td class="sub-name"><span class="sub-arrow" aria-hidden="true">↳</span> מדריכים <span class="status-chip ${s.overBudget ? 'over' : 'under'}">${statusLabel}</span></td>
+      <td class="num muted">ניצול ${pct}%</td>
+      <td class="num">${fmtCurrency(s.budget)}</td>
+      <td class="num">${fmtCurrency(s.actual)}${ic.estimated ? ' <span class="badge est">אומדן</span>' : ''}</td>
+      <td class="num ${s.overBudget ? 'over' : 'under'}">${fmtCurrency(s.remaining)}</td>
+      <td></td>
+    </tr>`;
+}
+
 /* --------------------------- Admin view --------------------------- */
 function renderAdmin() {
   const month = state.currentMonth;
@@ -1217,7 +1253,7 @@ function renderAdmin() {
     const s = KD.summariseBudget(b.budget, actual, b.overrun);
     const people = KD.baseTotal(house.headcount);
     tB += s.budget + s.overrun; tA += s.actual;
-    return `<tr>
+    const houseRow = `<tr>
       <td><strong>${esc(house.name)}</strong><div class="muted mono" style="font-size:.7rem">${esc(house.id)}</div></td>
       <td class="num">${people}</td>
       <td class="num">${fmtCurrency(s.budget)}</td>
@@ -1225,6 +1261,7 @@ function renderAdmin() {
       <td class="num ${s.overBudget ? 'over' : 'under'}">${fmtCurrency(s.remaining)}</td>
       <td><button class="ghost" data-act="openHouse" data-id="${esc(house.id)}">פתח</button></td>
     </tr>`;
+    return houseRow + instructorSubRow(house, b, month);
   }).join('');
 
   if (!state.houses.length) {
@@ -1298,7 +1335,13 @@ function onInput(e) {
       const b = budgetForMonth(house, state.currentMonth);
       b.budget = KD.parseMoney(t.value);
       reformatMoney(t);
-      updateBudgetTiles(house); persist.budget(house, state.currentMonth); break;
+      updateBudgetTiles(house); updateInstructorsWarn(b); persist.budget(house, state.currentMonth); break;
+    }
+    case 'instructorsBudgetAmount': {
+      const b = budgetForMonth(house, state.currentMonth);
+      b.instructorsBudget = KD.parseMoney(t.value);
+      reformatMoney(t);
+      updateInstructorsWarn(b); persist.budget(house, state.currentMonth); break;
     }
     case 'overrunAmount': {
       const b = budgetForMonth(house, state.currentMonth);
@@ -1325,6 +1368,16 @@ function toggleBelowMin(house, input, item) {
   row.classList.toggle('below-min', below);
   const mc = row.querySelector('.stk-min');
   if (mc) mc.classList.toggle('over', below);
+}
+
+/* Show/hide the "instructors budget exceeds the total" warning live (no
+   re-render, so the input keeps focus while typing). A warning, never a block —
+   the value is still saved. */
+function updateInstructorsWarn(b) {
+  const el = document.getElementById('instructorsWarn');
+  if (!el) return;
+  const over = b.instructorsBudget > b.budget && b.budget > 0;
+  el.style.display = over ? '' : 'none';
 }
 
 /* Reformat a money input with thousands separators while typing, keeping the
