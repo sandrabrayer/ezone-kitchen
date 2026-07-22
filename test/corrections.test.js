@@ -71,6 +71,57 @@ test('correctStock leaves an already-clean pantry unchanged (idempotent)', () =>
   assert.deepEqual(KD.correctStock(once), once);
 });
 
+/* -------------------- split: עוף שלם/פרגיות → עוף שלם + פרגיות -------------------- */
+test('SEED_CATALOG splits the combined meat item into two priced items', () => {
+  assert.equal(KD.catalogLookup(KD.SEED_CATALOG, 'עוף שלם/פרגיות'), null); // combined gone
+  assert.equal(KD.catalogLookup(KD.SEED_CATALOG, 'עוף שלם').price, 22);
+  assert.equal(KD.catalogLookup(KD.SEED_CATALOG, 'פרגיות').price, 40);
+});
+
+test('correctCatalog folds a stored עוף שלם/פרגיות entry into עוף שלם', () => {
+  const cat = KD.correctCatalog([{ name: 'עוף שלם/פרגיות', unit: 'kg', category: 'meat', min: 12 }]);
+  assert.equal(KD.catalogLookup(cat, 'עוף שלם/פרגיות'), null);
+  assert.equal(KD.catalogLookup(cat, 'עוף שלם').name, 'עוף שלם');
+});
+
+test('correctStock migrates a combined-name stock row to עוף שלם, merging quantity', () => {
+  const fixed = KD.correctStock([
+    { id: 'a', name: 'עוף שלם', category: 'meat', qty: 4, unit: 'kg', minQty: 0 },
+    { id: 'b', name: 'עוף שלם/פרגיות', category: 'meat', qty: 6, unit: 'kg', minQty: 0 },
+  ]);
+  const rows = fixed.filter((s) => KD.catalogKey(s.name) === KD.catalogKey('עוף שלם'));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].qty, 10); // 4 + 6
+  assert.equal(fixed.find((s) => s.name === 'עוף שלם/פרגיות'), undefined);
+});
+
+test('correctStock renames a lone combined-name row to עוף שלם', () => {
+  const fixed = KD.correctStock([{ id: 'b', name: 'עוף שלם/פרגיות', category: 'meat', qty: 7, unit: 'kg', minQty: 0 }]);
+  assert.equal(fixed.length, 1);
+  assert.equal(fixed[0].name, 'עוף שלם');
+  assert.equal(fixed[0].qty, 7);
+});
+
+/* -------------------- par/price override key migration -------------------- */
+test('migrateParOverrideKeys moves a combined-name override onto עוף שלם', () => {
+  const out = KD.migrateParOverrideKeys({ [KD.catalogKey('עוף שלם/פרגיות')]: { min: 20, price: 25 } });
+  assert.deepEqual(out, { [KD.catalogKey('עוף שלם')]: { min: 20, price: 25 } });
+});
+
+test('migrateParOverrideKeys: a saved עוף שלם override is NEVER clobbered by the alias', () => {
+  const combinedKey = KD.catalogKey('עוף שלם/פרגיות');
+  const canonKey = KD.catalogKey('עוף שלם');
+  const out = KD.migrateParOverrideKeys({ [combinedKey]: { price: 25 }, [canonKey]: { price: 30 } });
+  assert.deepEqual(out, { [canonKey]: { price: 30 } }); // canonical wins, regardless of order
+});
+
+test('migrateParOverrideKeys leaves a clean map unchanged (idempotent) and drops proto keys', () => {
+  const clean = { [KD.catalogKey('אורז')]: { min: 5 } };
+  assert.deepEqual(KD.migrateParOverrideKeys(clean), clean);
+  assert.deepEqual(KD.migrateParOverrideKeys(KD.migrateParOverrideKeys(clean)), clean);
+  assert.deepEqual(KD.migrateParOverrideKeys({ __proto__: { min: 9 } }), {});
+});
+
 /* -------------------- weeklyPlan split -------------------- */
 function weekWith(ings) {
   const w = KD.emptyWeekMenu('2026-07-19');

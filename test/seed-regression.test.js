@@ -9,15 +9,16 @@ const KD = require('../lib/kitchen-domain');
    data invariant — merge(user catalog, SEED) yields user + all 89, untouched —
    is asserted here so it can't silently regress. */
 
-const SEED_LEN = 89;
+const SEED_LEN = 90;
 
-test('load with catalog = [one user item] → user item + all 89 seed items', () => {
+test('load with catalog = [one user item] → user item + all 90 seed items', () => {
   const user = [{ name: 'בצים', unit: 'unit', category: 'groceries' }]; // user's own item
   const merged = KD.mergeCatalog(user, KD.SEED_CATALOG);
   assert.equal(merged.length, SEED_LEN + 1);
   assert.ok(KD.catalogLookup(merged, 'בצים'), 'user item present');
   assert.ok(KD.catalogLookup(merged, 'ביצים'), 'seed item ביצים present');
-  assert.ok(KD.catalogLookup(merged, 'עוף שלם/פרגיות'), 'seed meat item present');
+  assert.ok(KD.catalogLookup(merged, 'עוף שלם'), 'split meat item עוף שלם present');
+  assert.ok(KD.catalogLookup(merged, 'פרגיות'), 'split meat item פרגיות present');
 });
 
 test('the user item is untouched (unit/category preserved over any seed clash)', () => {

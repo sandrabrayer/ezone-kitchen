@@ -7,6 +7,78 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Changed — realistic prices, meal model, weekend factor, par rescale & baking allocation
+
+A single pass rebasing the kitchen's quantity/cost math on how the houses
+actually eat. All of it lives in the shared domain module (`lib/kitchen-domain.js`)
+and the frontend (`public/app.js`); the Apps Script backend stores raw data only,
+so **no Apps Script redeploy is needed** (clasp CI has nothing to build for this
+change — `apps-script/**` is untouched).
+
+**1. Seed price corrections (verified vs market, July 2026).** `SEED_CATALOG`:
+חזה עוף 32→**38**, שניצל 35→**45**, בשר טחון 55→**60** ₪/ק"ג. The combined
+`עוף שלם/פרגיות` meat item is **split** into two priced items — `עוף שלם` 22 and
+`פרגיות` 40 ₪/ק"ג. Migration: an existing stock row or par/price override stored
+under the old combined name folds onto **עוף שלם** (`NAME_ALIASES` +
+`correctStock` for stock; new `migrateParOverrideKeys` for overrides, run on load
+and persisted once). A cook's **saved price override is never overwritten** — seed
+prices are only defaults; `effectivePrice` still prefers the override.
+
+**2. Meal model (cooked vs self-serve).** Cooked/planned meals run at the full
+count (מטופלים + כל הצוות): בוקר + צהריים ראשון–שישי, ארוחת ערב שישי, צהריים שבת.
+Self-serve evenings (ערב ראשון–חמישי + ערב שבת) run at **מטופלים + 2 מדריכים** and
+eat from the base pantry. New pure helpers: `mealHeadcount` (`{full, evening}`),
+`EVENING_STAFF` (2). The **תפריט** tab now collapses every ערב slot except Friday
+to a "ערב עצמאי — מכוסה ממלאי הבסיס" note (Friday dinner and Saturday lunch stay
+planned), and every meal header shows a diner **reference** ("בוקר: X סועדים" /
+"ערב: Y סועדים", Y = patients+2) that never changes the cook's quantities. The
+**תפוסה** tab keeps both base inputs and adds a read-only
+"בוקר/צהריים: X | ערב עצמאי: Y" line (live on edit).
+
+**3. Effective weekly factor (automatic math only).** A self-serve evening is
+weighted **0.5** of a cooked meal; Friday + Saturday quantities are reduced **25%**.
+`dailyFactor(hc)` = (2×full + 0.5×evening) / (3×full) as a fraction of the full
+count; `weekFactor(hc)` = (5×dailyFactor + 2×dailyFactor×0.75) / 7;
+`effectivePeople(hc)` = weekFactor × baseTotal — the diner-equivalent every weekly
+quantity scales by. The **כמויות בסיס** header now reads "מחושב לפי X סועדים
+אפקטיביים (ערבים עצמאיים, שישי-שבת ‎-25%)".
+
+**4. מלאי מינימום rescale.** Effective par = `seedMin × (weekFactor × baseTotal ÷
+25)`, with the same per-unit rounding (יחידות whole, ק"ג/ליטר 0.5, גרם/מ"ל 50).
+Every people-scaled read — `effectiveCatalogStock`, `withEffectiveMins`,
+`effectiveParFor`, `baselineForHouse` — now takes `effectivePeople(hc)` instead of
+the raw head count, so קניות / צפי / השלמה and the count-screen "מינימום: X"
+recompute live on a תפוסה change. Manual par overrides are still absolute and
+never rescaled. Evening-staple seed pars (לחם, גבינות, ביצים, ירקות, ממרחים) are
+bumped **+20%** so self-serve evenings are covered.
+
+**5. Baking allocation.** Baking-staple seed pars (קמח, סוכר, ביצים, שוקולד ציפים,
+אבקת אפייה, שמרים, קקאו, וניל) are bumped **+25%**. The baseline surfaces a
+separate estimated **"אפייה"** line = the incremental cost of that bump
+(bumpedCost × 0.25/1.25 over default rows). (ביצים takes both bumps,
+multiplicatively.)
+
+**6. Budget baseline.** The baseline uses the corrected prices × rescaled pars
+(incl. the baking bump). Its summary now shows four figures —
+**סה"כ מזון: ₪X | אפייה: ₪A | חד"פ (15%): ₪Y | סה"כ תקציב מומלץ: ₪Z**
+(`budgetRecommendation`, `DISPOSABLES_RATE` 0.15; A is a breakdown inside X,
+Z = X + Y). **«אמץ כתקציב»** now copies **Z** (food + חד"פ) into the monthly
+budget, and the תקציב tab's "בסיס מחושב" shows Z.
+
+- **Security**: `migrateParOverrideKeys` drops `__proto__`/`constructor`/`prototype`
+  keys (prototype-pollution safe); the new baseline-summary and תפוסה live updates
+  render numeric-only content, and all menu interpolation stays `esc()`-escaped.
+- **Tests** (`node --test`, 208 pass): `test/meal-model.test.js` — meal counts
+  (evening = patients+2), dailyFactor/weekFactor/effectivePeople, par rescale +
+  rounding + override precedence, the +20%/+25% seed bumps, baseline food/baking/
+  disposables/recommended lines, and a saved price override surviving the seed
+  correction. `test/corrections.test.js` — the עוף שלם/פרגיות split migration
+  (catalog, stock merge/rename, override-key migration with canonical-wins).
+  Existing seed/count/regression tests updated for the new counts (90 seed items,
+  9 meat) and bumped pars. Browser smoke (`scripts/smoke-browser.cjs`, 48
+  assertions) drives the effective-par rescale, the תפוסה meal line, the self-serve
+  menu notes, the four-part baseline summary, and «אמץ כתקציב» copying Z.
+
 ### Docs / CI — clasp CI rollout marked COMPLETE (verified 22/07/2026)
 
 - clasp CI rollout marked COMPLETE (verified 22/07/2026). `EZONE-ECOSYSTEM-STATUS.md` updated to the July 22 version — new "Apps Script deployment" section (automatic via GitHub Actions, clasp 3.3.0, hardened; trigger = merge to the deployed branch `main` touching `apps-script/**`; redeploys the EXISTING deployment so the `/exec` URL is unchanged; per-repo secrets `CLASPRC_JSON` + `DEPLOYMENT_ID`; token-refresh = `clasp login` → update `CLASPRC_JSON` in all six repos with the same value), a per-app deployed-branch table verified 22/07/2026, and ezone-kitchen + ezone-coordinators added to the app table. All manual copy-paste redeploy instructions marked OBSOLETE (superseded by clasp CI; emergency fallback only), in the doc and `DEPLOY.md`.

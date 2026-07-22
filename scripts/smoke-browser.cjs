@@ -105,6 +105,12 @@ async function main() {
   page.on('pageerror', (e) => errors.push('PAGEERROR ' + e.message));
   const base = 'http://localhost:' + port + '/';
 
+  // Effective par helpers (meal model): par scales by weekFactor × baseTotal
+  // (self-serve evenings + weekend -25%), NOT the raw head count.
+  const SEEDCAT = KD.seedCatalog([]);
+  const effP = (p, s) => KD.effectivePeople({ basePatients: p, baseStaff: s });
+  const parOf = (name, p, s) => String(KD.effectiveParFor(SEEDCAT, name, effP(p, s), {}).qty);
+
   try {
     await page.goto(base);
     await page.waitForFunction(() => window.KitchenDomain && document.querySelector('#tabs button'));
@@ -162,7 +168,7 @@ async function main() {
     });
     ok(milkBuy && /21/.test(milkBuy), 'menu need beyond stock → max logic holds (buy 21 ל, not 12): ' + milkBuy);
 
-    /* ---- Pure par top-up: a week with NO menu → 15 − 3 = 12 to buy ---- */
+    /* ---- Pure par top-up: a week with NO menu → effective par − 3 to buy ---- */
     await page.click('[data-tab="menu"]');
     await page.click('[data-act="weekNext"]'); // an empty week (no menu demand)
     await page.click('[data-tab="shopping"]');
@@ -171,7 +177,10 @@ async function main() {
       const item = [...document.querySelectorAll('.shop-item')].find((li) => /חלב/.test(li.textContent));
       return item ? item.querySelector('.shop-qty').textContent.trim() : null;
     });
-    ok(milkPar && /12/.test(milkPar), 'min=15 + qty=3 (no menu) → קניות shows 12 to buy: ' + milkPar);
+    // effective par at 20+5 people minus 3 on hand.
+    const milkBuyExpected = String(KD.roundQty(Number(parOf('חלב', 20, 5)) - 3));
+    ok(milkPar && milkPar.includes(milkBuyExpected),
+      'min (effective) + qty=3 (no menu) → קניות shows ' + milkBuyExpected + ' to buy: ' + milkPar);
     await page.click('[data-tab="menu"]');
     await page.click('[data-act="weekPrev"]'); // back to the current week
     await page.click('[data-tab="shopping"]');
@@ -250,7 +259,7 @@ async function main() {
     const planEmpty = await page.evaluate(() => document.querySelector('#screen').textContent);
     ok(/עדיין לא הוזן תפריט לשבוע זה/.test(planEmpty), 'empty-menu week shows the friendly message');
 
-    /* ---- כמויות בסיס baseline tab (house is 25 people → par = seed) ---- */
+    /* ---- כמויות בסיס baseline tab (meal-model effective people, not raw 25) ---- */
     const milkKey = KD.catalogKey('חלב');
     const riceKey2 = KD.catalogKey('אורז');
     await page.click('[data-tab="baseline"]');
@@ -258,14 +267,13 @@ async function main() {
     const bHead = await page.evaluate(() => document.querySelector('#screen').textContent);
     ok(/הכמות הבסיסית לבית לחודש — קובעת את התקציב/.test(bHead), 'baseline header present');
     ok(/ייחוס: 25/.test(bHead), 'reference-25 subtitle present');
+    ok(/סועדים אפקטיביים/.test(bHead), 'effective-diners header present (meal model)');
+    // Four-part summary: מזון X | אפייה A | חד"פ 15% Y | תקציב מומלץ Z.
+    ok(/סה"כ מזון/.test(bHead) && /חד"פ \(15%\)/.test(bHead) && /סה"כ תקציב מומלץ/.test(bHead),
+      'baseline summary shows מזון / אפייה / חד"פ / תקציב מומלץ');
     const milkParBase = await page.$eval(`input[data-act="parMin"][data-key="${milkKey}"]`, (el) => el.value);
-    ok(milkParBase === '15', 'חלב weekly par = seed 15 at 25 people: ' + milkParBase);
-    const milkCost = await page.evaluate((k) => {
-      const inp = document.querySelector(`input[data-act="parMin"][data-key="${k}"]`);
-      const tr = inp && inp.closest('tr');
-      return tr ? tr.querySelector('.par-cost').textContent.trim() : null;
-    }, milkKey);
-    ok(milkCost && /390/.test(milkCost), 'חלב monthly cost = 60 × 6.5 = ₪390: ' + milkCost);
+    const milkParExpected = parOf('חלב', 20, 5); // 15 × effP/25 → 11.5
+    ok(milkParBase === milkParExpected, 'חלב weekly par = effective ' + milkParExpected + ' at 20+5 people: ' + milkParBase);
 
     /* ---- count reference + qty picker ---- */
     await page.click('[data-tab="stock"]');
@@ -281,13 +289,17 @@ async function main() {
     ok((await page.$eval(milkCountSel, (el) => el.value)) === '5', 'picking a value fills the qty field (חלב = 5)');
     await page.click('[data-act="countCancel"]');
 
-    /* ---- scaling: bump תפוסה to 50 → אורז par doubles 10 → 20 ---- */
+    /* ---- תפוסה read-only meal line + live rescale on headcount change ---- */
     await page.click('[data-tab="headcount"]');
-    await page.fill('input[data-act="baseP"]', '45'); // 45 patients + 5 staff = 50
+    const occ = await page.evaluate(() => document.querySelector('#mealOccupancy').textContent);
+    ok(/בוקר\/צהריים:\s*25/.test(occ), 'תפוסה shows cooked-meal count 25');
+    ok(/ערב עצמאי:\s*22/.test(occ), 'תפוסה shows self-serve evening count 22 (patients + 2)');
+    await page.fill('input[data-act="baseP"]', '45'); // 45 patients + 5 staff = full 50
     await page.click('[data-tab="baseline"]');
     await page.waitForSelector('.baseline-total');
-    ok((await page.$eval(`input[data-act="parMin"][data-key="${riceKey2}"]`, (el) => el.value)) === '20',
-      'אורז par recomputes to 20 at 50 people (auto on תפוסה change)');
+    const riceParExpected = parOf('אורז', 45, 5);
+    ok((await page.$eval(`input[data-act="parMin"][data-key="${riceKey2}"]`, (el) => el.value)) === riceParExpected,
+      'אורז par recomputes to effective ' + riceParExpected + ' at 45+5 people (auto on תפוסה change)');
 
     /* ---- override wins and is NOT rescaled; persists ---- */
     await page.fill(`input[data-act="parMin"][data-key="${milkKey}"]`, '12');
@@ -302,13 +314,14 @@ async function main() {
 
     /* ---- reset overrides: per-row, stock-min, and bulk (house-scoped) ---- */
     page.on('dialog', (dlg) => dlg.accept()); // accept the bulk-reset confirm
-    // per-row baseline reset → override cleared, par back to the scaled 30 @ 50 people
+    // per-row baseline reset → override cleared, par back to the effective default
     await page.click(`button[data-act="parReset"][data-key="${milkKey}"]`);
     await waitFor(() => !(db.houses[0].parOverrides && db.houses[0].parOverrides[milkKey]), 'per-row reset cleared the override');
     ok(true, 'per-row אפס לברירת מחדל clears the override');
     await page.waitForSelector('.baseline-total');
-    ok((await page.$eval(`input[data-act="parMin"][data-key="${milkKey}"]`, (el) => el.value)) === '30',
-      'reset row returns to the scaled default (30 @ 50 people)');
+    const milkResetExpected = parOf('חלב', 45, 5);
+    ok((await page.$eval(`input[data-act="parMin"][data-key="${milkKey}"]`, (el) => el.value)) === milkResetExpected,
+      'reset row returns to the effective default (' + milkResetExpected + ' @ 45+5 people)');
     ok(!(await page.$eval(`input[data-act="parMin"][data-key="${milkKey}"]`, (el) => el.classList.contains('manual'))),
       'reset row loses the ידני highlight');
 
@@ -332,14 +345,26 @@ async function main() {
     await waitFor(() => !Object.keys(db.houses[0].parOverrides || {}).length, 'bulk reset cleared all overrides');
     ok(true, 'אפס הכל לברירת מחדל clears every override for the house');
 
-    /* ---- adopt the baseline as the monthly budget ---- */
+    /* ---- menu: self-serve evenings show the note (except Friday) ---- */
+    await page.click('[data-tab="menu"]');
+    await page.waitForSelector('.week-grid');
+    const menuText = await page.evaluate(() => document.querySelector('#screen').textContent);
+    ok(/ערב עצמאי — מכוסה ממלאי הבסיס/.test(menuText), 'self-serve evenings show the pantry note');
+    ok(/סועדים/.test(menuText), 'meal headers show the diner reference');
+
+    /* ---- adopt the RECOMMENDED total (Z = מזון + חד"פ) as the monthly budget ---- */
     await page.click('[data-tab="budget"]');
     await page.waitForSelector('[data-act="adoptBaseline"]');
-    ok(await page.evaluate(() => /בסיס מחושב/.test(document.querySelector('.baseline-adopt').textContent)), 'budget tab shows the computed baseline');
+    // The "בסיס מחושב" figure shown is Z; adopt must copy exactly that.
+    const recShown = await page.evaluate(() => {
+      const m = document.querySelector('.baseline-adopt').textContent.match(/([\d,]+(?:\.\d+)?)/);
+      return m ? parseFloat(m[1].replace(/,/g, '')) : 0;
+    });
+    ok(recShown > 0, 'budget tab shows the recommended total (מזון + חד"פ): ₪' + recShown);
     await page.click('[data-act="adoptBaseline"]');
     await page.waitForFunction(() => { const el = document.querySelector('input[data-act="budgetAmount"]'); return el && parseFloat(el.value.replace(/,/g, '')) > 0; });
     const budgetVal = parseFloat((await page.$eval('input[data-act="budgetAmount"]', (el) => el.value)).replace(/,/g, ''));
-    ok(budgetVal > 0, 'אמץ כתקציב copied the baseline into the monthly budget: ₪' + budgetVal);
+    ok(Math.abs(budgetVal - recShown) < 0.5, 'אמץ כתקציב copied the recommended total Z (₪' + budgetVal + ' = ₪' + recShown + ')');
 
     await page.screenshot({ path: path.join(ROOT, 'scripts', 'smoke-shot.png'), fullPage: true });
     ok(errors.length === 0, 'no uncaught page errors' + (errors.length ? ': ' + errors.join('; ') : ''));

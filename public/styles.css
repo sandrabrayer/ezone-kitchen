@@ -334,6 +334,10 @@ input::placeholder { color: #9aa8a1; }
 .meal-label { font-size: 0.95rem; color: var(--text); font-weight: 800; white-space: nowrap; }
 .meal-count { font-size: 0.72rem; font-weight: 800; color: var(--brand-strong); background: var(--brand-tint); border-radius: 999px; padding: 0 0.4rem; min-width: 1.1rem; text-align: center; }
 .meal-summary { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.85rem; }
+.meal-diners { font-size: 0.68rem; color: var(--muted); white-space: nowrap; font-weight: 700; }
+.meal-block.self-serve { opacity: 0.9; }
+.meal-block.self-serve .meal-label { font-weight: 700; color: var(--muted); }
+.self-serve-note { font-size: 0.82rem; margin: 0 0 0.4rem; }
 .meal-body { padding: 0 0.9rem 0.7rem; }
 .meal-actions { display: flex; gap: 0.4rem; align-items: center; margin-bottom: 0.3rem; flex-wrap: wrap; }
 .meal-actions .add-row { width: auto; min-height: 40px; padding: 0.3rem 0.8rem; font-size: 0.85rem; }
@@ -458,6 +462,16 @@ td.stk-min .reset-btn { margin-inline-start: 0.25rem; vertical-align: middle; }
 }
 .baseline-total span { font-weight: 700; }
 .baseline-total strong { font-size: 1.5rem; font-weight: 900; color: var(--brand-strong); }
+/* Multi-line summary: מזון / אפייה / חד"פ / תקציב מומלץ. Overrides the single-row
+   flex above (the element carries both .baseline-total and .baseline-summary). */
+.baseline-summary { display: block; }
+.baseline-summary .bl-line { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; padding: 0.15rem 0; }
+.baseline-summary .bl-line span { font-weight: 700; }
+.baseline-summary .bl-line strong { font-size: 1rem; font-weight: 800; color: var(--text); }
+.baseline-summary .bl-line.muted span, .baseline-summary .bl-line.muted strong { color: var(--muted); font-weight: 700; }
+.baseline-summary .bl-total { margin-top: 0.35rem; padding-top: 0.5rem; border-top: 1.5px dashed var(--brand); }
+.baseline-summary .bl-total strong { font-size: 1.5rem; font-weight: 900; color: var(--brand-strong); }
+.meal-occupancy { margin: 0.5rem 0 0; }
 .baseline-note { margin-top: 0.5rem; }
 .baseline-adopt {
   display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap;
