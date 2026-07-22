@@ -523,9 +523,9 @@ function renderMenu(house) {
 
   // Per-meal diner REFERENCE (never scales the cook's quantities): cooked meals
   // (בוקר/צהריים + Friday dinner) run at the full count; self-serve evenings show
-  // מטופלים + 2. Base figures — a per-day headcount override still shows on the
+  // מטופלים + 2. Friday + Saturday are the reduced-occupancy weekend, so their
+  // reference is 75% (rounded). A per-day headcount override still shows on the
   // day pill below.
-  const meal2 = KD.mealHeadcount(house.headcount);
   const cols = KD.DAYS.map((day) => {
     const people = KD.effectiveForDay(house.headcount, day).total;
     const isToday = thisWeek && day === today;
@@ -538,8 +538,8 @@ function renderMenu(house) {
       const open = !!state.mealOpen[mealKey(day, meal)];
       // Self-serve = every ערב EXCEPT Friday (Shabbat dinner is cooked). Sat lunch
       // and all breakfasts/lunches stay cooked/planned.
-      const selfServe = meal === 'dinner' && day !== 'friday';
-      const diners = meal === 'dinner' ? meal2.evening : meal2.full;
+      const selfServe = KD.isSelfServeMeal(day, meal);
+      const diners = KD.mealDiners(house.headcount, day, meal);
       const names = dishes.map((dd) => String(dd.name || '').trim()).filter(Boolean);
       const summary = selfServe && !names.length ? SELF_SERVE_NOTE : (names.length ? names.join(' · ') : '—');
       const dishHtml = dishes.map((dish) => renderDish(day, meal, dish)).join('');
@@ -911,7 +911,7 @@ function renderBaseline(house) {
     <div class="baseline-head">
       <div class="screen-title">
         <h2 class="baseline-title">הכמות הבסיסית לבית לחודש — קובעת את התקציב</h2>
-        <span class="muted">מחושב לפי <strong>${effDiners}</strong> סועדים אפקטיביים (ערבים עצמאיים, שישי-שבת ‎-25%; ייחוס: ${KD.BASE_PEOPLE}). ערכי ברירת המחדל ניתנים לעריכה — עריכה נשמרת כערך <strong>ידני</strong> ומודגשת.</span>
+        <span class="muted">מחושב לפי <strong>${effDiners}</strong> סועדים אפקטיביים (ערבים עצמאיים, שישי בבוקר עד ראשון בבוקר ‎-25%; ייחוס: ${KD.BASE_PEOPLE}). ערכי ברירת המחדל ניתנים לעריכה — עריכה נשמרת כערך <strong>ידני</strong> ומודגשת.</span>
       </div>
       <div class="head-actions no-print">
         <button data-act="parResetAll" ${hasOverrides ? '' : 'disabled'} title="הסר את כל הערכים הידניים בבית זה">↺ אפס הכל לברירת מחדל</button>
@@ -970,7 +970,7 @@ function setParOverride(house, key, field, rawValue) {
 function baselineText(house) {
   const effDiners = Math.round(KD.effectivePeople(house.headcount));
   const b = KD.baselineForHouse(state.catalog, KD.effectivePeople(house.headcount), house.parOverrides || {});
-  const lines = ['🧮 כמויות בסיס לחודש – ' + house.name, 'מחושב לפי ' + effDiners + ' סועדים אפקטיביים (ערבים עצמאיים, שישי-שבת ‎-25%)', ''];
+  const lines = ['🧮 כמויות בסיס לחודש – ' + house.name, 'מחושב לפי ' + effDiners + ' סועדים אפקטיביים (ערבים עצמאיים, שישי בבוקר עד ראשון בבוקר ‎-25%)', ''];
   for (const c of KD.CATEGORIES) {
     const rows = b.rows.filter((r) => r.category === c && r.monthlyCost > 0);
     if (!rows.length) continue;
@@ -1325,9 +1325,9 @@ function onInput(e) {
       persist.menu(house, state.currentWeekOf);
       break;
     }
-    case 'baseP': house.headcount.basePatients = clampInt(t.value); updateBaseTotal(house); persist.headcount(house); break;
-    case 'baseS': house.headcount.baseStaff = clampInt(t.value); updateBaseTotal(house); persist.headcount(house); break;
-    case 'ovP': case 'ovS': setOverride(house, t.dataset.day, act === 'ovP' ? 'patients' : 'staff', t.value); persist.headcount(house); break;
+    case 'baseP': house.headcount.basePatients = clampInt(t.value); updateBaseTotal(house); persist.headcount(house); scheduleHeadcountRerender(); break;
+    case 'baseS': house.headcount.baseStaff = clampInt(t.value); updateBaseTotal(house); persist.headcount(house); scheduleHeadcountRerender(); break;
+    case 'ovP': case 'ovS': setOverride(house, t.dataset.day, act === 'ovP' ? 'patients' : 'staff', t.value); persist.headcount(house); scheduleHeadcountRerender(); break;
     case 'algName': { const a = house.allergies.find((x) => x.id === t.dataset.id); if (a) { a.name = t.value; persist.allergies(house); } break; }
     case 'algCount': { const a = house.allergies.find((x) => x.id === t.dataset.id); if (a) { a.count = clampInt(t.value); persist.allergies(house); } break; }
     case 'stkName': { const s = house.stock.find((x) => x.id === t.dataset.id); if (s) { s.name = t.value; persist.stock(house); } break; }
@@ -1376,13 +1376,40 @@ function reformatMoney(input) {
   try { input.setSelectionRange(end, end); } catch { /* number inputs disallow it */ }
 }
 
-/* Live update of the "סה"כ בסיס" figure without a full re-render (which would
-   drop focus from the input being typed into). */
+/* Live update of the "סה"כ בסיס" figure + the read-only meal-occupancy line
+   without a full re-render (which would drop focus from the input being typed
+   into). Runs on every keystroke for instant feedback. */
 function updateBaseTotal(house) {
   const el = document.getElementById('baseTotal');
   if (el) el.textContent = KD.baseTotal(house.headcount);
   const meal = document.getElementById('mealOccupancy');
   if (meal) meal.innerHTML = mealOccupancyLine(house.headcount);
+}
+
+/* Debounced full re-render of the תפוסה tab after a headcount edit, so the
+   daily-override effective totals (and any other in-tab figure derived from the
+   base) reflect the new numbers live — no page reload. Dependent tabs already
+   render from current state when switched to, so this only fires while the user
+   stays on תפוסה. Focus + caret are restored to the field being edited so typing
+   is uninterrupted. */
+let _hcRerenderTimer = null;
+function scheduleHeadcountRerender() {
+  if (_hcRerenderTimer) clearTimeout(_hcRerenderTimer);
+  _hcRerenderTimer = setTimeout(() => {
+    _hcRerenderTimer = null;
+    if (state.tab !== 'headcount') return; // switching tabs re-renders from state
+    const a = document.activeElement;
+    const focus = (a && a.dataset && a.dataset.act)
+      ? { act: a.dataset.act, day: a.dataset.day || '', id: a.dataset.id || '' } : null;
+    render();
+    if (focus) {
+      let sel = 'input[data-act="' + focus.act + '"]';
+      if (focus.day) sel += '[data-day="' + focus.day + '"]';
+      if (focus.id) sel += '[data-id="' + focus.id + '"]';
+      const el = document.querySelector(sel);
+      if (el) { el.focus(); try { const n = String(el.value).length; el.setSelectionRange(n, n); } catch (_) { /* number inputs reject setSelectionRange */ } }
+    }
+  }, 300);
 }
 
 function onChange(e) {

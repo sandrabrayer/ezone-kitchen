@@ -105,8 +105,23 @@ test('meal model: תפוסה shows the read-only per-meal line and scaling uses 
 
 test('menu: self-serve evenings collapse with the note; Friday dinner stays planned', () => {
   assert.match(app, /ערב עצמאי — מכוסה ממלאי הבסיס/, 'self-serve note');
-  assert.match(app, /meal === 'dinner' && day !== 'friday'/, 'self-serve = every ערב except Friday');
-  assert.match(app, /סועדים/, 'per-meal diner reference');
+  assert.match(app, /KD\.isSelfServeMeal\(day, meal\)/, 'self-serve classification via the domain');
+  assert.match(app, /KD\.mealDiners\(house\.headcount, day, meal\)/, 'per-meal diner ref (reduced on Fri/Sat) via the domain');
+});
+
+test('weekend window text + reduced-weekend diner references (Fri morning → Sun morning)', () => {
+  assert.match(app, /שישי בבוקר עד ראשון בבוקר ‎?-25%/, 'baseline header names the Fri-morning→Sun-morning window');
+  assert.ok(!/שישי-שבת ‎?-25%/.test(app), 'the old שישי-שבת wording is gone');
+});
+
+test('BUGFIX: תפוסה edits trigger a debounced live re-render (no reload needed)', () => {
+  assert.match(app, /function scheduleHeadcountRerender/, 'debounced re-render helper');
+  // wired to every base + daily-override input
+  assert.match(app, /case 'baseP':[^]*?scheduleHeadcountRerender\(\)/, 'baseP triggers live re-render');
+  assert.match(app, /case 'baseS':[^]*?scheduleHeadcountRerender\(\)/, 'baseS triggers live re-render');
+  assert.match(app, /case 'ovP': case 'ovS':[^]*?scheduleHeadcountRerender\(\)/, 'daily overrides trigger live re-render');
+  assert.match(app, /setTimeout\([^]*?render\(\)[^]*?300\)/, 'debounced ~300ms and re-renders');
+  assert.match(app, /el\.focus\(\)/, 'focus is restored after the re-render');
 });
 
 test('reset-to-default is wired: per-row (baseline + stock) and bulk', () => {

@@ -289,17 +289,26 @@ async function main() {
     ok((await page.$eval(milkCountSel, (el) => el.value)) === '5', 'picking a value fills the qty field (חלב = 5)');
     await page.click('[data-act="countCancel"]');
 
-    /* ---- תפוסה read-only meal line + live rescale on headcount change ---- */
+    /* ---- תפוסה read-only meal line + LIVE recompute on headcount change (no reload) ---- */
     await page.click('[data-tab="headcount"]');
     const occ = await page.evaluate(() => document.querySelector('#mealOccupancy').textContent);
     ok(/בוקר\/צהריים:\s*25/.test(occ), 'תפוסה shows cooked-meal count 25');
     ok(/ערב עצמאי:\s*22/.test(occ), 'תפוסה shows self-serve evening count 22 (patients + 2)');
     await page.fill('input[data-act="baseP"]', '45'); // 45 patients + 5 staff = full 50
+    // BUGFIX: the read-only meal line updates immediately, no reload.
+    await page.waitForFunction(() => /בוקר\/צהריים:\s*50/.test(document.querySelector('#mealOccupancy').textContent));
+    ok(true, 'תפוסה meal line updates live on edit (בוקר/צהריים: 50), no reload');
+    // BUGFIX: the daily-override effective total re-renders live (debounced) too.
+    await page.waitForFunction(() => [...document.querySelectorAll('#screen table.hc-daily strong, #screen table strong')].some((s) => s.textContent.trim() === '50'), null, { timeout: 3000 }).catch(() => {});
+    // Switch to a dependent tab → recomputed from current state, no reload.
     await page.click('[data-tab="baseline"]');
     await page.waitForSelector('.baseline-total');
     const riceParExpected = parOf('אורז', 45, 5);
     ok((await page.$eval(`input[data-act="parMin"][data-key="${riceKey2}"]`, (el) => el.value)) === riceParExpected,
-      'אורז par recomputes to effective ' + riceParExpected + ' at 45+5 people (auto on תפוסה change)');
+      'אורז par recomputes to effective ' + riceParExpected + ' at 45+5 people (auto on תפוסה change, no reload)');
+    const effHdr = await page.evaluate(() => (document.querySelector('#screen').textContent.match(/מחושב לפי\s*(\d+)/) || [])[1]);
+    ok(effHdr === String(Math.round(KD.effectivePeople({ basePatients: 45, baseStaff: 5 }))),
+      'baseline effective-diners header reflects the new תפוסה without reload: ' + effHdr);
 
     /* ---- override wins and is NOT rescaled; persists ---- */
     await page.fill(`input[data-act="parMin"][data-key="${milkKey}"]`, '12');
@@ -345,12 +354,25 @@ async function main() {
     await waitFor(() => !Object.keys(db.houses[0].parOverrides || {}).length, 'bulk reset cleared all overrides');
     ok(true, 'אפס הכל לברירת מחדל clears every override for the house');
 
-    /* ---- menu: self-serve evenings show the note (except Friday) ---- */
+    /* ---- menu: self-serve note + REDUCED weekend diner refs (Fri/Sat -25%) ---- */
     await page.click('[data-tab="menu"]');
     await page.waitForSelector('.week-grid');
     const menuText = await page.evaluate(() => document.querySelector('#screen').textContent);
     ok(/ערב עצמאי — מכוסה ממלאי הבסיס/.test(menuText), 'self-serve evenings show the pantry note');
     ok(/סועדים/.test(menuText), 'meal headers show the diner reference');
+    // House is 45+5 = full 50, evening 47. A weekday breakfast shows 50; Friday
+    // breakfast shows round(0.75×50)=38 (reduced-occupancy weekend).
+    const dayDiner = (heName, mealIdx) => page.evaluate(({ heName, mealIdx }) => {
+      const col = [...document.querySelectorAll('.day-col')].find((d) => new RegExp(heName).test(d.textContent));
+      const md = col && col.querySelectorAll('.meal-diners')[mealIdx];
+      return md ? md.textContent.trim() : null;
+    }, { heName, mealIdx });
+    const sunBreak = await dayDiner('ראשון', 0);
+    const friBreak = await dayDiner('שישי', 0);
+    const friDinner = await dayDiner('שישי', 2);
+    ok(/^50\b/.test(sunBreak || ''), 'Sunday breakfast = full 50 (weekday): ' + sunBreak);
+    ok(/^38\b/.test(friBreak || ''), 'Friday breakfast = round(0.75×50)=38 (weekend -25%): ' + friBreak);
+    ok(/^38\b/.test(friDinner || ''), 'Friday dinner (cooked, planned) = round(0.75×50)=38: ' + friDinner);
 
     /* ---- adopt the RECOMMENDED total (Z = מזון + חד"פ) as the monthly budget ---- */
     await page.click('[data-tab="budget"]');

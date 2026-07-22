@@ -7,6 +7,69 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Fixed — תפוסה edits now update dependent views live (no page reload)
+
+**Symptom:** after editing the תפוסה base inputs (מטופלים בסיס / אנשי צוות בסיס),
+the daily-override effective totals on the same tab did not refresh until a full
+page reload; only the "סה"כ בסיס" figure and the meal-occupancy line updated live.
+
+**Root cause:** the base-input handlers did a targeted `updateBaseTotal` (to keep
+the field focused while typing) but never re-rendered the rest of the תפוסה tab.
+Dependent tabs (כמויות בסיס / צפי / קניות) already render from current state when
+switched to — the factor/par math is pure with no load-time cache — so those were
+correct on switch; the gap was purely the in-tab daily table.
+
+**Fix:** new `scheduleHeadcountRerender()` — a **debounced (~300ms)** full
+re-render of the תפוסה tab, wired to every base + daily-override input
+(`baseP`/`baseS`/`ovP`/`ovS`). The read-only meal-occupancy line still updates
+**immediately** on each keystroke (`updateBaseTotal`); the debounced pass refreshes
+the daily effective totals and placeholders once typing pauses, then **restores
+focus + caret** to the edited field so typing is uninterrupted. It only fires
+while the user stays on תפוסה (switching tabs already re-renders from state). No
+module-level caches exist to invalidate (audited).
+
+- **Security**: the focus-restore selector is built only from app-controlled
+  `data-act`/`data-day`/`data-id` (day keys + generated UUIDs), never free text;
+  no new `innerHTML`/eval surface.
+- **Tests**: `test/meal-model.test.js` regression — a headcount change immediately
+  yields new `effectivePeople` + scaled pars with no cache drift (pure-function
+  guarantee). `test/frontend-shape.test.js` — the debounced re-render is wired to
+  all four inputs, debounced ~300ms, and restores focus. Browser smoke asserts the
+  meal line updates live on edit, the daily effective total re-renders to the new
+  value while still on תפוסה, and a dependent tab (baseline) reflects the new
+  headcount on switch — all without a reload.
+
+### Changed — reduced-occupancy weekend window (Friday morning → Sunday morning)
+
+Clarification to the weekend factor: fewer people are in the house for the whole
+window from **Friday morning until Sunday morning**, so the **‎-25%** now applies
+to **every** Friday meal (בוקר/צהריים/ערב) **and every** Saturday meal
+(בוקר/צהריים/ערב) — not only the planned weekend meals. Sunday breakfast onward is
+back to the full count.
+
+- `weekFactor` is rebuilt from an explicit per-`(day, meal)` model
+  (`mealFactor`): a cooked meal counts 1.0, a self-serve evening 0.5 × (evening/
+  full), and **Friday + Saturday multiply every meal by 0.75**. Friday dinner is a
+  planned/cooked meal, so it now counts as a **full meal reduced 25%** (not a
+  self-serve evening); Saturday's self-serve evening combines **both** its 0.5
+  weight **and** the 0.75 weekend rate. Averaged over all 21 meal slots, the
+  effective factor rises slightly (e.g. 20+5 → ~0.7752 vs ~0.7552), so pars,
+  baseline, צפי and shopping projections recompute accordingly.
+- **תפריט**: the diner reference next to each Friday/Saturday meal header now shows
+  the **reduced** count — `Math.round(0.75 × the meal's normal count)` — via the new
+  `mealDiners(hc, day, meal)`; weekdays are unchanged. Self-serve classification and
+  the reduced counts both come from the domain (`isSelfServeMeal`, `mealDiners`).
+- **כמויות בסיס** header text: "מחושב לפי X סועדים אפקטיביים (ערבים עצמאיים,
+  **שישי בבוקר עד ראשון בבוקר** ‎-25%)". Same wording in the WhatsApp share.
+- New pure domain helpers/exports: `WEEKEND_DAYS`, `isWeekendDay`,
+  `isSelfServeMeal`, `mealDiners`, `mealFactor`.
+- **Tests**: `test/meal-model.test.js` — `weekFactor` covers all Fri+Sat meals with
+  Sun–Thu full; `mealFactor` per-meal (Sunday full, Fri/Sat all meals ‎-25%, Sat
+  evening = 0.5 × 0.75); `mealDiners` reduced weekend references (Fri breakfast &
+  Fri cooked dinner = round(0.75×full), Sat self-serve dinner = round(0.75×evening));
+  effectivePeople/par expectations updated for the new factor. Browser smoke checks
+  Sunday breakfast = full, Friday breakfast & dinner = round(0.75×full).
+
 ### Changed — realistic prices, meal model, weekend factor, par rescale & baking allocation
 
 A single pass rebasing the kitchen's quantity/cost math on how the houses
