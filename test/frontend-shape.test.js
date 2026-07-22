@@ -75,8 +75,11 @@ test('כמויות בסיס baseline tab is a top-level tab with the required st
   assert.match(app, /function renderBaseline/, 'baseline renderer');
   assert.match(app, /הכמות הבסיסית לבית לחודש — קובעת את התקציב/, 'bold header');
   assert.match(app, /ייחוס: \$\{KD\.BASE_PEOPLE\}/, 'reference-25 subtitle');
+  assert.match(app, /סועדים אפקטיביים/, 'effective-diners header');
   assert.match(app, /KD\.baselineForHouse\(state\.catalog/, 'uses the domain baseline');
-  assert.match(app, /סה"כ עלות חודשית משוערת/, 'bottom total summary');
+  assert.match(app, /סה"כ מזון/, 'food subtotal line');
+  assert.match(app, /חד"פ \(15%\)/, 'disposables line');
+  assert.match(app, /סה"כ תקציב מומלץ/, 'recommended-total line');
   for (const act of ['parMin', 'parPrice', 'printBaseline']) {
     assert.ok(app.includes("'" + act + "'") || app.includes('data-act="' + act + '"'), 'missing wiring for ' + act);
   }
@@ -87,6 +90,23 @@ test('budget tab shows the computed baseline + an אמץ כתקציב button', (
   assert.match(app, /בסיס מחושב/, 'baseline shown in budget tab');
   assert.match(app, /data-act="adoptBaseline"/, 'adopt button wired');
   assert.match(app, /function adoptBaselineAsBudget/, 'adopt handler copies baseline into the budget');
+  // adopt copies the RECOMMENDED total Z (מזון + חד"פ), not the bare food total.
+  assert.match(app, /adoptBaselineAsBudget[^]*?\.recommended\.total/, 'adopt copies the recommended total (Z)');
+});
+
+test('meal model: תפוסה shows the read-only per-meal line and scaling uses effectivePeople', () => {
+  assert.match(app, /function mealOccupancyLine/, 'meal-occupancy helper');
+  assert.match(app, /בוקר\/צהריים:/, 'cooked-meal count line');
+  assert.match(app, /ערב עצמאי:/, 'self-serve evening count line');
+  // every people-scaled read uses the meal-model effective count, not the raw head count
+  assert.match(app, /KD\.effectivePeople\(house\.headcount\)/, 'scaling uses effectivePeople');
+  assert.ok(!/KD\.baselineForHouse\(state\.catalog, KD\.baseTotal/.test(app), 'baseline no longer scales by raw baseTotal');
+});
+
+test('menu: self-serve evenings collapse with the note; Friday dinner stays planned', () => {
+  assert.match(app, /ערב עצמאי — מכוסה ממלאי הבסיס/, 'self-serve note');
+  assert.match(app, /meal === 'dinner' && day !== 'friday'/, 'self-serve = every ערב except Friday');
+  assert.match(app, /סועדים/, 'per-meal diner reference');
 });
 
 test('reset-to-default is wired: per-row (baseline + stock) and bulk', () => {

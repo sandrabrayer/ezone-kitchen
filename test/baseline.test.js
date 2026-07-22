@@ -48,7 +48,7 @@ test('every SEED_CATALOG item carries a positive price (in its own unit)', () =>
   assert.equal(p('חלב'), 6.5);
   assert.equal(p('גבינה צהובה'), 0.045); // 45 ₪/ק"ג stored per-gram
   assert.equal(p('פפריקה'), 0.03);       // 30 ₪/ק"ג per-gram
-  assert.equal(p('בשר טחון'), 55);
+  assert.equal(p('בשר טחון'), 60);       // corrected July 2026 (was 55)
   assert.equal(p('ביצים'), 1.2);
 });
 

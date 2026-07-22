@@ -132,7 +132,7 @@ function budgetForMonth(house, month) {
 function effectiveStock(house) {
   // Full catalog ∪ stock (unstocked items count as 0) so קניות / צפי top-ups
   // cover every catalog item with a par, not just items already in stock.
-  return KD.effectiveCatalogStock(state.catalog, house.stock, KD.baseTotal(house.headcount), house.parOverrides || {});
+  return KD.effectiveCatalogStock(state.catalog, house.stock, KD.effectivePeople(house.headcount), house.parOverrides || {});
 }
 
 /* Add any names to the shared catalog and persist if it changed. */
@@ -261,6 +261,7 @@ async function loadState() {
   // fix is durable in the Sheet, not re-applied on every load.
   for (const h of state.houses) {
     if (h._stockMigrated) { delete h._stockMigrated; persist.stock(h); }
+    if (h._parMigrated) { delete h._parMigrated; persist.parOverrides(h); }
   }
 
   // Keep the current house if it still exists, else default to the first.
@@ -285,6 +286,12 @@ function normaliseHouse(h, catalogSeed) {
   h.stockCounts = Array.isArray(h.stockCounts) ? h.stockCounts : []; // dated snapshots
   h.shoppingExtras = normaliseExtras(h.shoppingExtras); // per-week manual list items
   h.parOverrides = normaliseParOverrides(h.parOverrides); // per-item par/price overrides
+  // Fold overrides stored under a renamed/aliased catalog name onto the canonical
+  // key (e.g. the split combined-meat item → עוף שלם), never clobbering a saved
+  // override for the canonical name. Flag a change so loadState persists it.
+  const povBefore = JSON.stringify(h.parOverrides);
+  h.parOverrides = KD.migrateParOverrideKeys(h.parOverrides);
+  if (JSON.stringify(h.parOverrides) !== povBefore) h._parMigrated = true;
   h.budgets = (h.budgets && typeof h.budgets === 'object') ? h.budgets : {};
   h.weeks = (h.weeks && typeof h.weeks === 'object') ? h.weeks : {};
   // Legacy single monthlyBudget → migrate into the current month if unset.
@@ -498,6 +505,10 @@ function findDishTemplate(house, name) {
 
 function mealKey(day, meal) { return day + ':' + meal; }
 
+/* Self-serve evenings (ערב, every day except Friday) are covered by the base
+   pantry, not planned in the menu. Shown as the collapsed-slot note. */
+const SELF_SERVE_NOTE = 'ערב עצמאי — מכוסה ממלאי הבסיס.';
+
 function renderMenu(house) {
   const weekOf = state.currentWeekOf;
   const week = ensureWeek(house, weekOf);
@@ -510,6 +521,11 @@ function renderMenu(house) {
   const pickerOptions = '<option value="">מנה קיימת…</option>' +
     dishNames.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
 
+  // Per-meal diner REFERENCE (never scales the cook's quantities): cooked meals
+  // (בוקר/צהריים + Friday dinner) run at the full count; self-serve evenings show
+  // מטופלים + 2. Base figures — a per-day headcount override still shows on the
+  // day pill below.
+  const meal2 = KD.mealHeadcount(house.headcount);
   const cols = KD.DAYS.map((day) => {
     const people = KD.effectiveForDay(house.headcount, day).total;
     const isToday = thisWeek && day === today;
@@ -520,20 +536,26 @@ function renderMenu(house) {
     const meals = KD.MEALS.map((meal) => {
       const dishes = Array.isArray(dayPlan[meal]) ? dayPlan[meal] : [];
       const open = !!state.mealOpen[mealKey(day, meal)];
+      // Self-serve = every ערב EXCEPT Friday (Shabbat dinner is cooked). Sat lunch
+      // and all breakfasts/lunches stay cooked/planned.
+      const selfServe = meal === 'dinner' && day !== 'friday';
+      const diners = meal === 'dinner' ? meal2.evening : meal2.full;
       const names = dishes.map((dd) => String(dd.name || '').trim()).filter(Boolean);
-      const summary = names.length ? names.join(' · ') : '—';
+      const summary = selfServe && !names.length ? SELF_SERVE_NOTE : (names.length ? names.join(' · ') : '—');
       const dishHtml = dishes.map((dish) => renderDish(day, meal, dish)).join('');
       const body = open ? `<div class="meal-body">
+          ${selfServe ? `<p class="self-serve-note muted">${esc(SELF_SERVE_NOTE)} תכנון מנה כאן הוא אופציונלי.</p>` : ''}
           <div class="meal-actions">
             <button class="add-row" data-act="addDish" data-day="${day}" data-meal="${meal}">＋ מנה</button>
             <select class="dish-picker" data-act="pickDish" data-day="${day}" data-meal="${meal}" aria-label="הוסף מנה קיימת">${pickerOptions}</select>
           </div>
           ${dishHtml || '<div class="meal-empty">—</div>'}
         </div>` : '';
-      return `<div class="meal-block meal-${meal}${open ? ' open' : ''}">
+      return `<div class="meal-block meal-${meal}${selfServe ? ' self-serve' : ''}${open ? ' open' : ''}">
         <button type="button" class="meal-head" data-act="toggleMeal" data-day="${day}" data-meal="${meal}" aria-expanded="${open}">
           <span class="meal-caret" aria-hidden="true">${open ? '▾' : '◂'}</span>
           <span class="meal-label">${esc(KD.MEAL_LABELS_HE[meal])}</span>
+          <span class="meal-diners muted" title="סועדים (ייחוס בלבד)">${diners} סועדים</span>
           <span class="meal-count">${dishes.length || ''}</span>
           ${open ? '' : `<span class="meal-summary muted">${esc(summary)}</span>`}
         </button>
@@ -677,6 +699,13 @@ function renderDish(day, meal, dish) {
   </div>`;
 }
 
+/* Read-only meal-model occupancy line for the תפוסה tab:
+   cooked בוקר/צהריים at the full count, self-serve ערב at מטופלים + 2. */
+function mealOccupancyLine(hc) {
+  const m = KD.mealHeadcount(hc);
+  return `בוקר/צהריים: <strong>${m.full}</strong> סועדים | ערב עצמאי: <strong>${m.evening}</strong> סועדים (מטופלים + 2 מדריכים)`;
+}
+
 /* ------------------------- Headcount view ------------------------- */
 function renderHeadcount(house) {
   const hc = house.headcount;
@@ -701,6 +730,7 @@ function renderHeadcount(house) {
         <label>אנשי צוות (בסיס): <input type="number" min="0" value="${house.headcount.baseStaff || ''}" data-act="baseS" style="width:80px" /></label>
         <span class="pill">סה"כ בסיס: <strong id="baseTotal">${KD.baseTotal(hc)}</strong></span>
       </div>
+      <p class="muted meal-occupancy" id="mealOccupancy">${mealOccupancyLine(hc)}</p>
     </div>
     <div class="card">
       <h3>חריגות יומיות</h3>
@@ -742,8 +772,8 @@ function renderStock(house) {
   const tabs = KD.CATEGORIES.map((c) =>
     `<button data-act="stockCat" data-cat="${c}" aria-current="${active === c}"><span class="cat-dot cat-${c}" aria-hidden="true"></span>${esc(KD.CATEGORY_LABELS_HE[c])}</button>`).join('');
   const items = house.stock.filter((s) => s.category === active);
-  const baseTotal = KD.baseTotal(house.headcount);
-  const effItems = KD.withEffectiveMins(items, state.catalog, baseTotal, house.parOverrides || {}); // parallel to items
+  const effPeople = KD.effectivePeople(house.headcount);
+  const effItems = KD.withEffectiveMins(items, state.catalog, effPeople, house.parOverrides || {}); // parallel to items
   const rows = items.length ? items.map((item, i) => {
     const unit = KD.safeUnit(item.unit);
     const effMin = (effItems[i] && effItems[i].minQty) || 0;
@@ -797,7 +827,7 @@ function renderStockCount(house) {
   const date = state.countDate || KD.toISODate(new Date());
   state.countDate = date;
   const allRows = KD.stockCountRows(state.catalog, house.stock);
-  const baseTotal = KD.baseTotal(house.headcount);
+  const effPeople = KD.effectivePeople(house.headcount);
   const sections = KD.CATEGORIES.map((c) => {
     const list = allRows.filter((r) => r.category === c);
     if (!list.length) return '';
@@ -805,7 +835,7 @@ function renderStockCount(house) {
       const unit = KD.safeUnit(r.unit);
       const edited = Object.prototype.hasOwnProperty.call(state.countValues, r.key);
       const val = edited ? state.countValues[r.key] : r.qty;
-      const eff = KD.effectiveParFor(state.catalog, r.name, baseTotal, house.parOverrides || {});
+      const eff = KD.effectiveParFor(state.catalog, r.name, effPeople, house.parOverrides || {});
       const minRef = eff.qty > 0 ? `<span class="count-min muted" title="מלאי מינימום מחושב">מינימום: ${fmtQty(eff.qty, eff.unit)}</span>` : '';
       return `<tr>
         <td>${esc(r.name)}${minRef}</td>
@@ -837,9 +867,20 @@ function renderStockCount(house) {
    its monthly quantity (×4), the estimated price and the monthly cost. The grand
    total is the budget baseline. Qty + price are editable inline; edits save as
    per-item overrides (highlighted) and never rescale. */
+/* The four-part baseline summary (spec §6): food X, the אפייה breakdown A (part
+   of X), חד"פ 15% Y, and the recommended total Z = X + Y. */
+function baselineSummaryInner(b) {
+  const r = b.recommended;
+  return `<div class="bl-line"><span>סה"כ מזון</span><strong>${fmtCurrency(b.total)}</strong></div>
+    <div class="bl-line muted"><span>מזה אפייה (מוערך)</span><strong>${fmtCurrency(b.baking)}</strong></div>
+    <div class="bl-line muted"><span>חד"פ (15%)</span><strong>${fmtCurrency(r.disposables)}</strong></div>
+    <div class="bl-line bl-total"><span>סה"כ תקציב מומלץ</span><strong>${fmtCurrency(r.total)}</strong></div>`;
+}
+
 function renderBaseline(house) {
-  const people = KD.baseTotal(house.headcount);
-  const b = KD.baselineForHouse(state.catalog, people, house.parOverrides || {});
+  const effPeople = KD.effectivePeople(house.headcount);
+  const effDiners = Math.round(effPeople);
+  const b = KD.baselineForHouse(state.catalog, effPeople, house.parOverrides || {});
   const hasOverrides = Object.keys(house.parOverrides || {}).length > 0;
 
   const sections = KD.CATEGORIES.map((c) => {
@@ -866,11 +907,11 @@ function renderBaseline(house) {
 
   return `<div class="card">
     ${flowHint(2)}
-    <div class="print-only print-head"><h1>כמויות בסיס — ${esc(house.name)}</h1><div>מחושב עבור ${people} אנשים (ייחוס: ${KD.BASE_PEOPLE})</div></div>
+    <div class="print-only print-head"><h1>כמויות בסיס — ${esc(house.name)}</h1><div>מחושב לפי ${effDiners} סועדים אפקטיביים (ייחוס: ${KD.BASE_PEOPLE})</div></div>
     <div class="baseline-head">
       <div class="screen-title">
         <h2 class="baseline-title">הכמות הבסיסית לבית לחודש — קובעת את התקציב</h2>
-        <span class="muted">מחושב עבור <strong>${people}</strong> אנשים (ייחוס: ${KD.BASE_PEOPLE}). ערכי ברירת המחדל ניתנים לעריכה — עריכה נשמרת כערך <strong>ידני</strong> ומודגשת.</span>
+        <span class="muted">מחושב לפי <strong>${effDiners}</strong> סועדים אפקטיביים (ערבים עצמאיים, שישי-שבת ‎-25%; ייחוס: ${KD.BASE_PEOPLE}). ערכי ברירת המחדל ניתנים לעריכה — עריכה נשמרת כערך <strong>ידני</strong> ומודגשת.</span>
       </div>
       <div class="head-actions no-print">
         <button data-act="parResetAll" ${hasOverrides ? '' : 'disabled'} title="הסר את כל הערכים הידניים בבית זה">↺ אפס הכל לברירת מחדל</button>
@@ -879,21 +920,17 @@ function renderBaseline(house) {
       </div>
     </div>
     ${b.rows.length ? sections : emptyState('🧮', 'אין פריטים בקטלוג', 'הוסיפו פריטים למלאי כדי לבנות בסיס.')}
-    <div class="baseline-total">
-      <span>סה"כ עלות חודשית משוערת</span>
-      <strong id="baselineTotal">${fmtCurrency(b.total)}</strong>
-    </div>
-    <p class="muted baseline-note">זהו בסיס התקציב החודשי לבית. אפשר לאמץ אותו בלשונית «תקציב».</p>
+    <div class="baseline-total baseline-summary" id="baselineSummary">${baselineSummaryInner(b)}</div>
+    <p class="muted baseline-note">זהו בסיס התקציב החודשי לבית (מזון + חד"פ). אפשר לאמץ אותו בלשונית «תקציב».</p>
   </div>`;
 }
 
 /* Live-update a baseline row + the grand total after an inline qty/price edit,
    without a full re-render (keeps the input focused while typing). */
 function updateBaselineRowLive(house, inputEl, key) {
-  const people = KD.baseTotal(house.headcount);
-  const b = KD.baselineForHouse(state.catalog, people, house.parOverrides || {});
-  const totalEl = document.getElementById('baselineTotal');
-  if (totalEl) totalEl.textContent = fmtCurrency(b.total);
+  const b = KD.baselineForHouse(state.catalog, KD.effectivePeople(house.headcount), house.parOverrides || {});
+  const sumEl = document.getElementById('baselineSummary');
+  if (sumEl) sumEl.innerHTML = baselineSummaryInner(b);
   const r = b.rows.find((x) => x.key === key);
   const tr = inputEl.closest('tr');
   if (!r || !tr) return;
@@ -931,9 +968,9 @@ function setParOverride(house, key, field, rawValue) {
 
 /* WhatsApp/plain text of the monthly baseline (shared/printed summary). */
 function baselineText(house) {
-  const people = KD.baseTotal(house.headcount);
-  const b = KD.baselineForHouse(state.catalog, people, house.parOverrides || {});
-  const lines = ['🧮 כמויות בסיס לחודש – ' + house.name, 'מחושב עבור ' + people + ' אנשים (ייחוס ' + KD.BASE_PEOPLE + ')', ''];
+  const effDiners = Math.round(KD.effectivePeople(house.headcount));
+  const b = KD.baselineForHouse(state.catalog, KD.effectivePeople(house.headcount), house.parOverrides || {});
+  const lines = ['🧮 כמויות בסיס לחודש – ' + house.name, 'מחושב לפי ' + effDiners + ' סועדים אפקטיביים (ערבים עצמאיים, שישי-שבת ‎-25%)', ''];
   for (const c of KD.CATEGORIES) {
     const rows = b.rows.filter((r) => r.category === c && r.monthlyCost > 0);
     if (!rows.length) continue;
@@ -941,7 +978,10 @@ function baselineText(house) {
     for (const r of rows) lines.push('• ' + r.name + ': ' + fmtQty(r.monthQty, r.unit) + ' — ' + fmtCurrency(r.monthlyCost));
     lines.push('');
   }
-  lines.push('סה"כ חודשי משוער: ' + fmtCurrency(b.total));
+  lines.push('סה"כ מזון: ' + fmtCurrency(b.total));
+  lines.push('אפייה (מוערך): ' + fmtCurrency(b.baking));
+  lines.push('חד"פ (15%): ' + fmtCurrency(b.recommended.disposables));
+  lines.push('סה"כ תקציב מומלץ: ' + fmtCurrency(b.recommended.total));
   return lines.join('\n').trim();
 }
 
@@ -1140,7 +1180,8 @@ function renderBudget(house) {
       <td class="muted">${esc(KD.formatDateHe(p.date || ''))}</td><td class="num">${fmtCurrency(p.amount)}</td><td>${esc(p.note || '')}</td>
       <td><button class="danger" data-act="purDel" data-id="${esc(p.id)}">מחק</button></td></tr>`).join('') : '';
 
-  const baselineTotal = KD.baselineForHouse(state.catalog, KD.baseTotal(house.headcount), house.parOverrides || {}).total;
+  const baseline = KD.baselineForHouse(state.catalog, KD.effectivePeople(house.headcount), house.parOverrides || {});
+  const recommended = baseline.recommended.total; // Z = מזון + חד"פ
 
   return `<div class="card">
       <h2 style="margin:0 0 .3rem">תקציב — ${esc(house.name)}</h2>
@@ -1150,8 +1191,8 @@ function renderBudget(house) {
         <button class="icon-btn" data-act="monthNext" aria-label="חודש הבא">←</button>
       </div>
       <div class="baseline-adopt">
-        <span>בסיס מחושב (כמויות בסיס): <strong>${fmtCurrency(baselineTotal)}</strong></span>
-        <button class="ghost" data-act="adoptBaseline" ${baselineTotal > 0 ? '' : 'disabled'} title="העתק את הבסיס המחושב לתקציב החודשי">אמץ כתקציב</button>
+        <span>בסיס מחושב (מזון + חד"פ): <strong>${fmtCurrency(recommended)}</strong></span>
+        <button class="ghost" data-act="adoptBaseline" ${recommended > 0 ? '' : 'disabled'} title="העתק את התקציב המומלץ (כולל חד\"פ) לתקציב החודשי">אמץ כתקציב</button>
       </div>
       <div class="row" style="flex-wrap:wrap;gap:1rem">
         <label class="muted">תקציב חודשי (₪): <input type="text" inputmode="decimal" value="${esc(KD.groupThousands(b.budget))}" data-act="budgetAmount" style="width:120px" /></label>
@@ -1176,16 +1217,16 @@ function renderBudget(house) {
     </div>`;
 }
 
-/* Copy the computed monthly baseline (from כמויות בסיס) into this month's
-   manual budget field. */
+/* Copy the recommended monthly total (from כמויות בסיס: מזון + חד"פ 15% = Z) into
+   this month's manual budget field. */
 function adoptBaselineAsBudget(house) {
-  const total = KD.baselineForHouse(state.catalog, KD.baseTotal(house.headcount), house.parOverrides || {}).total;
+  const total = KD.baselineForHouse(state.catalog, KD.effectivePeople(house.headcount), house.parOverrides || {}).recommended.total;
   if (!(total > 0)) return;
   const b = budgetForMonth(house, state.currentMonth);
   b.budget = total;
   persist.budget(house, state.currentMonth);
   render();
-  setStatus('התקציב עודכן לבסיס המחושב ✓');
+  setStatus('התקציב עודכן לתקציב המומלץ (כולל חד"פ) ✓');
 }
 
 /* Recompute the four budget tiles in place (no re-render, so the input keeps
@@ -1317,7 +1358,7 @@ function onInput(e) {
 /* Toggle the below-minimum red highlight live (no full re-render), comparing
    the on-hand qty to the item's EFFECTIVE (scaled/override) par. */
 function toggleBelowMin(house, input, item) {
-  const eff = KD.withEffectiveMins([item], state.catalog, KD.baseTotal(house.headcount), house.parOverrides || {})[0];
+  const eff = KD.withEffectiveMins([item], state.catalog, KD.effectivePeople(house.headcount), house.parOverrides || {})[0];
   const effMin = (eff && eff.minQty) || 0;
   const below = effMin > 0 && (Number(item.qty) || 0) < effMin;
   const row = input.closest('tr');
@@ -1340,6 +1381,8 @@ function reformatMoney(input) {
 function updateBaseTotal(house) {
   const el = document.getElementById('baseTotal');
   if (el) el.textContent = KD.baseTotal(house.headcount);
+  const meal = document.getElementById('mealOccupancy');
+  if (meal) meal.innerHTML = mealOccupancyLine(house.headcount);
 }
 
 function onChange(e) {

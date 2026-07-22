@@ -43,12 +43,12 @@ test('REGRESSION: empty stock + catalog → the plan top-up lists every par item
 
 test('REGRESSION: empty stock + FULL seed catalog → every item with min>0 appears in the top-up', () => {
   const week = KD.emptyWeekMenu('2026-07-19');
-  const cat = KD.seedCatalog([]); // 89 items, all with a par
+  const cat = KD.seedCatalog([]); // 90 items, all with a par
   const eff = KD.effectiveCatalogStock(cat, [], 25, {});
   const plan = KD.weeklyPlan(week, eff, undefined);
   const withPar = cat.filter((c) => c.min > 0).length;
-  assert.equal(withPar, 89);
-  assert.equal(plan.parTopUp.length, 89);
+  assert.equal(withPar, 90);
+  assert.equal(plan.parTopUp.length, 90);
   assert.ok(plan.parTopUp.every((p) => p.missing > 0));
 });
 

@@ -19,16 +19,17 @@ test('SEED_CATALOG entries are all valid (unit, category, positive min, unique)'
 test('SEED_CATALOG covers every category with the agreed counts', () => {
   const counts = {};
   for (const e of KD.SEED_CATALOG) counts[e.category] = (counts[e.category] || 0) + 1;
-  assert.deepEqual(counts, { groceries: 11, dry: 39, vegetables: 21, fruits: 10, meat: 8 });
-  assert.equal(KD.SEED_CATALOG.length, 89);
+  assert.deepEqual(counts, { groceries: 11, dry: 39, vegetables: 21, fruits: 10, meat: 9 });
+  assert.equal(KD.SEED_CATALOG.length, 90);
 });
 
 test('SEED_CATALOG carries the specified par levels (spot checks)', () => {
   const min = (n) => KD.catalogLookup(KD.SEED_CATALOG, n).min;
-  assert.equal(min('ביצים'), 120);
-  assert.equal(min('חלב'), 15);
+  assert.equal(min('ביצים'), 180);         // base 120 × 1.2 (evening) × 1.25 (baking)
+  assert.equal(min('חלב'), 15);            // not a staple → unchanged
   assert.equal(min('תפוחי אדמה'), 15);
-  assert.equal(min('עוף שלם/פרגיות'), 12);
+  assert.equal(min('עוף שלם'), 12);        // split item (was עוף שלם/פרגיות)
+  assert.equal(min('פרגיות'), 12);
   assert.equal(min('פפריקה'), 500);
   assert.equal(KD.catalogLookup(KD.SEED_CATALOG, 'ביצים').unit, 'unit');
   assert.equal(KD.catalogLookup(KD.SEED_CATALOG, 'חלב').unit, 'l');
@@ -38,11 +39,11 @@ test('SEED_CATALOG carries the specified par levels (spot checks)', () => {
 test('SEED_CATALOG dairy unit corrections', () => {
   const e = (n) => KD.catalogLookup(KD.SEED_CATALOG, n);
   assert.equal(e('גבינה לבנה').unit, 'unit');   // גביעים
-  assert.equal(e('גבינה לבנה').min, 6);
+  assert.equal(e('גבינה לבנה').min, 7.2);        // 6 × 1.2 evening bump
   assert.equal(e('גבינה צהובה').unit, 'g');
-  assert.equal(e('גבינה צהובה').min, 3000);
+  assert.equal(e('גבינה צהובה').min, 3600);      // 3000 × 1.2 evening bump
   assert.equal(e('חמאה').unit, 'unit');
-  assert.equal(e('חמאה').min, 8);
+  assert.equal(e('חמאה').min, 9.6);              // 8 × 1.2 evening bump
   assert.equal(e('שמנת מתוקה').unit, 'unit');   // גביעים
   assert.equal(e('שמנת חמוצה').unit, 'unit');   // גביעים
 });
@@ -60,7 +61,7 @@ test('SEED_CATALOG has עגבניות in ירקות once, no מכולת duplicat
 
 test('seedCatalog populates an empty catalog with every seed item + its min', () => {
   const cat = KD.seedCatalog([]);
-  assert.equal(cat.length, 89);
+  assert.equal(cat.length, 90);
   assert.equal(KD.catalogLookup(cat, 'אורז').min, 10);
 });
 
@@ -90,7 +91,7 @@ test('seedCatalog fills a MISSING (zero) default min from the seed', () => {
 test('seedCatalog merges seed alongside genuinely new user items', () => {
   const user = [{ name: 'פריט מיוחד', unit: 'unit', category: 'dry', min: 7 }];
   const cat = KD.seedCatalog(user);
-  assert.equal(cat.length, 90); // 89 seed + 1 custom
+  assert.equal(cat.length, 91); // 90 seed + 1 custom
   assert.equal(KD.catalogLookup(cat, 'פריט מיוחד').min, 7);
 });
 
