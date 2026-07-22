@@ -10,7 +10,7 @@ into the nested `AppState` the frontend uses.
 | ------------------ | --------------------------------------------------- | ----- |
 | `houses`           | `id`, `name`                                        | One row per house. |
 | `budget`           | `houseId`, `monthlyBudget`                          | Legacy single budget; migrated to `monthlyBudgets` on load. |
-| `monthlyBudgets`   | `houseId`, `month`, `budget`, `overrun`, `overrunNote` | Per-month budget + approved overrun (חריגה מאושרת). |
+| `monthlyBudgets`   | `houseId`, `month`, `budget`, `overrun`, `overrunNote`, `instructorsBudget` | Per-month budget + approved overrun (חריגה מאושרת). `budget` is the total food budget; `instructorsBudget` is the separate מדריכים line (0/empty for pre-split records). |
 | `headcount`        | `houseId`, `basePatients`, `baseStaff`, `overridesJson` | One row per house; overrides stored as JSON. |
 | `allergies`        | `id`, `houseId`, `name`, `count`                    | Many rows per house. |
 | `stock`            | `id`, `houseId`, `name`, `category`, `qty`, `unit`, `min` | Many rows per house. `qty`/`min` are in `unit`. |
@@ -43,7 +43,7 @@ load → {
 }
 House {
   id, name,
-  budgets     { [month]: { budget, overrun, overrunNote } },  // per-month; from `monthlyBudgets`
+  budgets     { [month]: { budget, overrun, overrunNote, instructorsBudget } },  // per-month; from `monthlyBudgets`
   monthlyBudget,                             // legacy single budget (migrated on load)
   headcount { basePatients, baseStaff, overrides },  // overrides = { [day]: {patients?, staff?} }
   allergies   [ { id, name, count } ],

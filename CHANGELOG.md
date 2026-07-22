@@ -7,6 +7,46 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Added — split house budgets into total + instructors lines
+
+Each house budget is now **two figures per month**: the total monthly food
+budget and a separate **מדריכים (instructors) budget**. Fully backward
+compatible — an existing record with only a total reads as `instructorsBudget:
+0` and keeps its meaning.
+
+- **Schema (Apps Script):** the `monthlyBudgets` tab gained a trailing
+  `instructorsBudget` column (append-only, position-safe). `saveBudget_`
+  validates every amount non-negative via a new `nonNeg_` helper and returns a
+  `warnings: ['instructors_over_total']` note (never an error) when the
+  instructors budget exceeds the total; `loadAll_` returns `instructorsBudget`
+  per month. New columns require a redeploy (new version of the EXISTING
+  deployment — the `/exec` URL is unchanged).
+- **Domain (`lib/kitchen-domain.js`):** new pure helpers —
+  `validateBudgetInput` (non-negative coercion + instructors-over-total
+  warning), `instructorCostForMonth(workers, month, fallbackBudget)` (sum of
+  costs for workers whose role is `מדריך`; recorded monthly actuals when
+  present, otherwise an ESTIMATE flagged `estimated: true`, falling back to the
+  instructors budget when there is no worker data), `isInstructorRole`,
+  `nonNegativeAmount`, and `utilisationPct`.
+- **Budget-vs-cost table (כל הבתים):** houses with an instructors budget now
+  show an indented **מדריכים** sub-row under the house row — budget, actual
+  instructor cost for the selected month (with the **אומדן** badge when the
+  figure is an estimate), יתרה/חריגה, ניצול %, and a status chip. The house
+  total row is unchanged.
+- **עריכת תקציב editor:** a second input, **תקציב מדריכים**, with the same
+  thousands-separator formatting, live validation, and a non-blocking warning
+  when it exceeds the total monthly budget.
+- **Seed script `scripts/seed_budgets.js`:** seeds the opening split budgets
+  (ramot 228,109 / 72,744; asher 190,476 / 60,620; ofroni 186,779 / 60,620;
+  rehab 166,430 / 60,620; pardes / sde_eliezer / hq none). Defaults to a DRY
+  RUN that only prints; `--apply` writes, `--month=YYYY-MM` picks the month, and
+  an apply preserves each month's existing approved overrun.
+- **Tests:** `instructor-cost` (actuals vs estimate fallback, role filtering,
+  clamping), `budget-validation` (non-negative coercion, instructors-over-total
+  warning-not-error), and `split-budget-frontend` (a DOM-less page-load
+  regression that executes `public/app.js` and asserts the sub-row / editor
+  input render). 205 tests green.
+
 ### Docs / CI — clasp CI rollout marked COMPLETE (verified 22/07/2026)
 
 - clasp CI rollout marked COMPLETE (verified 22/07/2026). `EZONE-ECOSYSTEM-STATUS.md` updated to the July 22 version — new "Apps Script deployment" section (automatic via GitHub Actions, clasp 3.3.0, hardened; trigger = merge to the deployed branch `main` touching `apps-script/**`; redeploys the EXISTING deployment so the `/exec` URL is unchanged; per-repo secrets `CLASPRC_JSON` + `DEPLOYMENT_ID`; token-refresh = `clasp login` → update `CLASPRC_JSON` in all six repos with the same value), a per-app deployed-branch table verified 22/07/2026, and ezone-kitchen + ezone-coordinators added to the app table. All manual copy-paste redeploy instructions marked OBSOLETE (superseded by clasp CI; emergency fallback only), in the doc and `DEPLOY.md`.

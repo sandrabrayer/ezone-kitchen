@@ -367,6 +367,15 @@ tr.below-min td { background: color-mix(in srgb, var(--danger) 9%, transparent);
 tr.below-min td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
 input.over { color: var(--danger); font-weight: 800; }
 
+/* budget-vs-cost: indented מדריכים sub-row under a house row */
+tr.subrow td { background: color-mix(in srgb, var(--brand) 5%, transparent); border-bottom: 1px solid var(--border); }
+tr.subrow .sub-name { padding-inline-start: 1.6rem; font-weight: 600; }
+tr.subrow .sub-arrow { color: var(--muted); margin-inline-end: 0.2rem; }
+.status-chip { display: inline-block; margin-inline-start: 0.4rem; padding: 0.05rem 0.45rem; border-radius: 999px; font-size: 0.7rem; font-weight: 700; }
+.status-chip.under { background: color-mix(in srgb, var(--brand) 16%, transparent); color: var(--brand-strong, var(--brand)); }
+.status-chip.over { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
+.badge.est { display: inline-block; padding: 0.05rem 0.4rem; border-radius: 4px; font-size: 0.68rem; font-weight: 700; background: color-mix(in srgb, var(--muted) 22%, transparent); color: var(--muted); }
+
 /* stock: "add item" combobox row (category-scoped catalog dropdown + button) */
 .stock-add { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.7rem; flex-wrap: wrap; }
 .stock-add input { flex: 1; min-width: 180px; }
