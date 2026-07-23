@@ -25,12 +25,17 @@ const KD = require('../lib/kitchen-domain');
 const CHROME = process.env.CHROME || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 const ROOT = path.join(__dirname, '..');
 const WEEK = KD.weekStart(new Date()); // the week the app opens on
+const MONTH = KD.monthKey(new Date());  // overview/budget month
+const TODAY_ISO = KD.toISODate(new Date());
 
 /* ---- in-memory backend (mirrors the actions the frontend calls) ---- */
 function makeDb() {
   return {
     houses: [{
-      id: 'h1', name: 'בית בדיקה', monthlyBudget: 0, budgets: {},
+      id: 'h1', name: 'בית בדיקה', monthlyBudget: 0,
+      // Seeded budget + a purchase for the current month → the overview must show
+      // REAL numbers (₪20,000 / ₪5,000), never ₪0.00 as a loading stand-in.
+      budgets: { [MONTH]: { budget: 20000, overrun: 0, overrunNote: '' } },
       headcount: { basePatients: 20, baseStaff: 5, overrides: {} },
       allergies: [],
       // חלב: par 15, on-hand 3  → shortfall 12 with no menu demand.
@@ -40,7 +45,8 @@ function makeDb() {
         { id: 'stk_eggs_old', name: 'בצים', category: 'groceries', qty: 30, unit: 'unit', minQty: 0 },
         { id: 'stk_eggs', name: 'ביצים', category: 'groceries', qty: 10, unit: 'unit', minQty: 120 },
       ],
-      purchases: [], consumption: [], stockCounts: [], shoppingExtras: {},
+      purchases: [{ id: 'pur1', weekOf: WEEK, amount: 5000, note: 'קניות', date: TODAY_ISO }],
+      consumption: [], stockCounts: [], shoppingExtras: {},
       // A menu that needs 20 l of חלב this week → buffered 24, shortfall 21 > par 12.
       weeks: {
         [WEEK]: {
@@ -65,6 +71,15 @@ function startServer() {
     const h = db.houses.find((x) => x.id === b.houseId);
     switch (b.action) {
       case 'load': return res.json({ ok: true, houses: db.houses, catalog: db.catalog });
+      case 'loadOverview': {
+        // Batched, light summary — mirrors Code.gs loadOverview_. A small delay
+        // makes the loading state (skeleton/spinner) observable in the smoke.
+        const month = KD.normMonth(b.month);
+        const rows = db.houses.map((x) => KD.houseMonthRaw(x, month));
+        return setTimeout(() => res.json({ ok: true, month, houses: rows }), 250);
+      }
+      case 'saveBudget': if (h) { h.budgets = h.budgets || {}; h.budgets[b.month] = b.budget; } return res.json({ ok: true });
+      case 'saveHeadcount': if (h) h.headcount = b.headcount; return res.json({ ok: true });
       case 'saveStock': if (h) h.stock = b.stock; return res.json({ ok: true });
       case 'saveCatalog': db.catalog = b.catalog; return res.json({ ok: true });
       case 'saveStockCount':
@@ -289,17 +304,26 @@ async function main() {
     ok((await page.$eval(milkCountSel, (el) => el.value)) === '5', 'picking a value fills the qty field (חלב = 5)');
     await page.click('[data-act="countCancel"]');
 
-    /* ---- תפוסה read-only meal line + live rescale on headcount change ---- */
+    /* ---- תפוסה read-only meal line + LIVE recompute on headcount change (no reload) ---- */
     await page.click('[data-tab="headcount"]');
     const occ = await page.evaluate(() => document.querySelector('#mealOccupancy').textContent);
     ok(/בוקר\/צהריים:\s*25/.test(occ), 'תפוסה shows cooked-meal count 25');
     ok(/ערב עצמאי:\s*22/.test(occ), 'תפוסה shows self-serve evening count 22 (patients + 2)');
     await page.fill('input[data-act="baseP"]', '45'); // 45 patients + 5 staff = full 50
+    // BUGFIX: the read-only meal line updates immediately, no reload.
+    await page.waitForFunction(() => /בוקר\/צהריים:\s*50/.test(document.querySelector('#mealOccupancy').textContent));
+    ok(true, 'תפוסה meal line updates live on edit (בוקר/צהריים: 50), no reload');
+    // BUGFIX: the daily-override effective total re-renders live (debounced) too.
+    await page.waitForFunction(() => [...document.querySelectorAll('#screen table.hc-daily strong, #screen table strong')].some((s) => s.textContent.trim() === '50'), null, { timeout: 3000 }).catch(() => {});
+    // Switch to a dependent tab → recomputed from current state, no reload.
     await page.click('[data-tab="baseline"]');
     await page.waitForSelector('.baseline-total');
     const riceParExpected = parOf('אורז', 45, 5);
     ok((await page.$eval(`input[data-act="parMin"][data-key="${riceKey2}"]`, (el) => el.value)) === riceParExpected,
-      'אורז par recomputes to effective ' + riceParExpected + ' at 45+5 people (auto on תפוסה change)');
+      'אורז par recomputes to effective ' + riceParExpected + ' at 45+5 people (auto on תפוסה change, no reload)');
+    const effHdr = await page.evaluate(() => (document.querySelector('#screen').textContent.match(/מחושב לפי\s*(\d+)/) || [])[1]);
+    ok(effHdr === String(Math.round(KD.effectivePeople({ basePatients: 45, baseStaff: 5 }))),
+      'baseline effective-diners header reflects the new תפוסה without reload: ' + effHdr);
 
     /* ---- override wins and is NOT rescaled; persists ---- */
     await page.fill(`input[data-act="parMin"][data-key="${milkKey}"]`, '12');
@@ -345,12 +369,25 @@ async function main() {
     await waitFor(() => !Object.keys(db.houses[0].parOverrides || {}).length, 'bulk reset cleared all overrides');
     ok(true, 'אפס הכל לברירת מחדל clears every override for the house');
 
-    /* ---- menu: self-serve evenings show the note (except Friday) ---- */
+    /* ---- menu: self-serve note + REDUCED weekend diner refs (Fri/Sat -25%) ---- */
     await page.click('[data-tab="menu"]');
     await page.waitForSelector('.week-grid');
     const menuText = await page.evaluate(() => document.querySelector('#screen').textContent);
     ok(/ערב עצמאי — מכוסה ממלאי הבסיס/.test(menuText), 'self-serve evenings show the pantry note');
     ok(/סועדים/.test(menuText), 'meal headers show the diner reference');
+    // House is 45+5 = full 50, evening 47. A weekday breakfast shows 50; Friday
+    // breakfast shows round(0.75×50)=38 (reduced-occupancy weekend).
+    const dayDiner = (heName, mealIdx) => page.evaluate(({ heName, mealIdx }) => {
+      const col = [...document.querySelectorAll('.day-col')].find((d) => new RegExp(heName).test(d.textContent));
+      const md = col && col.querySelectorAll('.meal-diners')[mealIdx];
+      return md ? md.textContent.trim() : null;
+    }, { heName, mealIdx });
+    const sunBreak = await dayDiner('ראשון', 0);
+    const friBreak = await dayDiner('שישי', 0);
+    const friDinner = await dayDiner('שישי', 2);
+    ok(/^50\b/.test(sunBreak || ''), 'Sunday breakfast = full 50 (weekday): ' + sunBreak);
+    ok(/^38\b/.test(friBreak || ''), 'Friday breakfast = round(0.75×50)=38 (weekend -25%): ' + friBreak);
+    ok(/^38\b/.test(friDinner || ''), 'Friday dinner (cooked, planned) = round(0.75×50)=38: ' + friDinner);
 
     /* ---- adopt the RECOMMENDED total (Z = מזון + חד"פ) as the monthly budget ---- */
     await page.click('[data-tab="budget"]');
@@ -365,6 +402,44 @@ async function main() {
     await page.waitForFunction(() => { const el = document.querySelector('input[data-act="budgetAmount"]'); return el && parseFloat(el.value.replace(/,/g, '')) > 0; });
     const budgetVal = parseFloat((await page.$eval('input[data-act="budgetAmount"]', (el) => el.value)).replace(/,/g, ''));
     ok(Math.abs(budgetVal - recShown) < 0.5, 'אמץ כתקציב copied the recommended total Z (₪' + budgetVal + ' = ₪' + recShown + ')');
+    // let the debounced budget save flush to the backend before the overview reads
+    // it (so the batched endpoint and the local optimistic value agree)
+    await waitFor(() => db.houses[0].budgets[MONTH] && Math.round(db.houses[0].budgets[MONTH].budget) === Math.round(recShown), 'adopted budget saved for the month');
+
+    /* ---- BUG B: daily override updates סה"כ אפקטיבי INSTANTLY (optimistic) ---- */
+    await page.click('[data-tab="headcount"]');
+    await page.waitForSelector('tr[data-hc-day="sunday"] input[data-act="ovP"]');
+    const sunOvP = 'tr[data-hc-day="sunday"] input[data-act="ovP"]';
+    await page.fill(sunOvP, '30'); // 30 patients + 5 base staff = 35 effective, at once
+    // read the row total IMMEDIATELY (no debounce/network wait)
+    const sunEff = await page.$eval('tr[data-hc-day="sunday"] .hc-eff-total', (el) => el.textContent.trim());
+    ok(sunEff === '35', 'daily override paints סה"כ אפקטיבי instantly (30+5=35), no reload/wait: ' + sunEff);
+
+    /* ---- BUG A: "כל הבתים" overview shows REAL numbers, never ₪0.00 as loading ---- */
+    await page.click('[data-tab="admin"]');
+    await page.waitForSelector('#screen table tbody tr');
+    const cells = await page.evaluate(() => {
+      const tds = [...document.querySelectorAll('#screen table tbody tr td')];
+      return tds.map((td) => td.textContent.trim());
+    });
+    // columns: name | diners | budget | actual | remaining | (button)
+    const budgetCell = (cells[2] || '').replace(/[₪,\s]/g, '');
+    const actualCell = (cells[3] || '').replace(/[₪,\s]/g, '');
+    ok(actualCell === '5000' || actualCell === '5000.00' || /5000/.test(actualCell),
+      'overview shows the real actual spend ₪5,000 (not ₪0.00): ' + cells[3]);
+    ok(Number(budgetCell) > 0, 'overview budget is the real figure, not ₪0.00: ' + cells[2]);
+    // manual refresh: the "מרענן…" indicator shows and the numbers stay real (optimistic).
+    await page.click('[data-act="refreshOverview"]');
+    const refreshing = await page.evaluate(() => /מרענן/.test(document.querySelector('#screen').textContent));
+    ok(refreshing, 'refresh button shows a מרענן… indicator while the batched fetch runs');
+    const duringRefresh = await page.evaluate(() => {
+      const td = document.querySelectorAll('#screen table tbody tr td')[3];
+      return td ? td.textContent.trim() : '';
+    });
+    ok(/5,?000/.test(duringRefresh), 'numbers stay real during refresh (optimistic, never ₪0): ' + duringRefresh);
+    await page.waitForFunction(() => !/מרענן/.test(document.querySelector('#screen').textContent), null, { timeout: 3000 }).catch(() => {});
+    const afterRefresh = await page.$$eval('#screen table tbody tr td', (tds) => (tds[3] ? tds[3].textContent.trim() : ''));
+    ok(/5,?000/.test(afterRefresh), 'overview still shows real numbers after the batched refresh: ' + afterRefresh);
 
     await page.screenshot({ path: path.join(ROOT, 'scripts', 'smoke-shot.png'), fullPage: true });
     ok(errors.length === 0, 'no uncaught page errors' + (errors.length ? ': ' + errors.join('; ') : ''));

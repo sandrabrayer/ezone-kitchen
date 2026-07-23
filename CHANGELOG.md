@@ -7,6 +7,121 @@ pre-release so versions are `0.x`.
 
 ## [Unreleased]
 
+### Fixed — slow updates that looked broken: overview ₪0 + daily-occupancy lag (optimistic UI)
+
+Two "did it even work?" moments on slow Apps Script round-trips, fixed with an
+optimistic-UI pattern: **the UI updates from local state instantly and never
+shows ₪0 as a stand-in for "loading."**
+
+**A. "כל הבתים" overview no longer flashes ₪0.00.**
+- **Loading ≠ zero.** A new `loadingState()` (spinner + "טוען…" + skeleton lines)
+  renders until the initial load resolves (`state.dataLoaded`), and the overview
+  shows per-row **skeletons** while it has nothing real yet — never a zeroed table.
+- **Optimistic + refreshable.** The overview renders from a **local compute**
+  (`KD.houseMonthRaw` over already-loaded state) the moment data exists — real
+  numbers, instantly, reflecting this session's edits. A new **↻ רענן** button and
+  **auto-refresh on tab entry / month change** pull fresh figures from a light
+  **batched `loadOverview` endpoint** (`apps-script/Code.gs`) that reads only the
+  four small tabs it needs (houses / monthlyBudgets / purchases / headcount) — far
+  cheaper than the full `load`. A stale-token guard drops out-of-order responses;
+  on failure it **falls back to the local compute** rather than blanking.
+- **No stale-over-fresh.** A house with a pending (debounced) save keeps its
+  **optimistic local row** on refresh (`hasPendingSave`), so a just-edited number
+  never briefly reverts to the server's old value.
+- **Month-key consistency.** A single shared `KD.normMonth()` normaliser is used by
+  the overview, the תקציב tab and the backend endpoint, and `houseMonthRaw`
+  tolerates a stored budget key that isn't exactly normalised — the fix for a
+  subtle key mismatch silently showing ₪0. `actualSpendForMonth` normalises its
+  month arg too.
+
+**B. Daily overrides (חריגות יומיות) reflect instantly.**
+- Typing a day's מטופלים/צוות now repaints that row's **סה"כ אפקטיבי immediately**
+  from a local compute (`updateOverrideRow` → `KD.effectiveForDay`), with the
+  debounced background save + focus retention from the previous change. No reload,
+  no waiting on the network for the number to move.
+
+- **Apps Script**: adds one **new read action** `loadOverview` — a **redeploy is
+  required**, handled by **clasp CI on merge** (the workflow fires on merges that
+  touch `apps-script/**`; the `/exec` URL is unchanged).
+- **Security**: the batched-endpoint response is **sanitised at the trust boundary**
+  (every numeric field coerced; `name`/`id` stay `esc()`-escaped on render), so a
+  bad backend value can neither poison the math nor render as markup;
+  `houseMonthRaw` skips prototype-polluting budget keys; the overview endpoint is a
+  read behind the same server-injected shared secret. The optimistic DOM updates
+  render numeric/`esc()`-escaped content only.
+- **Tests**: `test/overview.test.js` — `normMonth` (Date / YYYY-MM / full ISO /
+  junk), overview↔budget key agreement, `houseMonthRaw` shape + month-key
+  tolerance + 0-not-undefined + proto-key safety, and `summariseBudget` over the row
+  (real over-budget, not a zero stand-in). `test/frontend-shape.test.js` — the
+  optimistic overview wiring (batched fetch + local fallback, skeletons, boot
+  loading state, refresh button, auto-refresh) and the instant daily-override
+  repaint. Browser smoke: the overview shows real ₪ for a seeded month (never
+  ₪0.00), stays real through a refresh (מרענן… indicator), and a daily override
+  paints סה"כ אפקטיבי instantly.
+
+### Fixed — תפוסה edits now update dependent views live (no page reload)
+
+**Symptom:** after editing the תפוסה base inputs (מטופלים בסיס / אנשי צוות בסיס),
+the daily-override effective totals on the same tab did not refresh until a full
+page reload; only the "סה"כ בסיס" figure and the meal-occupancy line updated live.
+
+**Root cause:** the base-input handlers did a targeted `updateBaseTotal` (to keep
+the field focused while typing) but never re-rendered the rest of the תפוסה tab.
+Dependent tabs (כמויות בסיס / צפי / קניות) already render from current state when
+switched to — the factor/par math is pure with no load-time cache — so those were
+correct on switch; the gap was purely the in-tab daily table.
+
+**Fix:** new `scheduleHeadcountRerender()` — a **debounced (~300ms)** full
+re-render of the תפוסה tab, wired to every base + daily-override input
+(`baseP`/`baseS`/`ovP`/`ovS`). The read-only meal-occupancy line still updates
+**immediately** on each keystroke (`updateBaseTotal`); the debounced pass refreshes
+the daily effective totals and placeholders once typing pauses, then **restores
+focus + caret** to the edited field so typing is uninterrupted. It only fires
+while the user stays on תפוסה (switching tabs already re-renders from state). No
+module-level caches exist to invalidate (audited).
+
+- **Security**: the focus-restore selector is built only from app-controlled
+  `data-act`/`data-day`/`data-id` (day keys + generated UUIDs), never free text;
+  no new `innerHTML`/eval surface.
+- **Tests**: `test/meal-model.test.js` regression — a headcount change immediately
+  yields new `effectivePeople` + scaled pars with no cache drift (pure-function
+  guarantee). `test/frontend-shape.test.js` — the debounced re-render is wired to
+  all four inputs, debounced ~300ms, and restores focus. Browser smoke asserts the
+  meal line updates live on edit, the daily effective total re-renders to the new
+  value while still on תפוסה, and a dependent tab (baseline) reflects the new
+  headcount on switch — all without a reload.
+
+### Changed — reduced-occupancy weekend window (Friday morning → Sunday morning)
+
+Clarification to the weekend factor: fewer people are in the house for the whole
+window from **Friday morning until Sunday morning**, so the **‎-25%** now applies
+to **every** Friday meal (בוקר/צהריים/ערב) **and every** Saturday meal
+(בוקר/צהריים/ערב) — not only the planned weekend meals. Sunday breakfast onward is
+back to the full count.
+
+- `weekFactor` is rebuilt from an explicit per-`(day, meal)` model
+  (`mealFactor`): a cooked meal counts 1.0, a self-serve evening 0.5 × (evening/
+  full), and **Friday + Saturday multiply every meal by 0.75**. Friday dinner is a
+  planned/cooked meal, so it now counts as a **full meal reduced 25%** (not a
+  self-serve evening); Saturday's self-serve evening combines **both** its 0.5
+  weight **and** the 0.75 weekend rate. Averaged over all 21 meal slots, the
+  effective factor rises slightly (e.g. 20+5 → ~0.7752 vs ~0.7552), so pars,
+  baseline, צפי and shopping projections recompute accordingly.
+- **תפריט**: the diner reference next to each Friday/Saturday meal header now shows
+  the **reduced** count — `Math.round(0.75 × the meal's normal count)` — via the new
+  `mealDiners(hc, day, meal)`; weekdays are unchanged. Self-serve classification and
+  the reduced counts both come from the domain (`isSelfServeMeal`, `mealDiners`).
+- **כמויות בסיס** header text: "מחושב לפי X סועדים אפקטיביים (ערבים עצמאיים,
+  **שישי בבוקר עד ראשון בבוקר** ‎-25%)". Same wording in the WhatsApp share.
+- New pure domain helpers/exports: `WEEKEND_DAYS`, `isWeekendDay`,
+  `isSelfServeMeal`, `mealDiners`, `mealFactor`.
+- **Tests**: `test/meal-model.test.js` — `weekFactor` covers all Fri+Sat meals with
+  Sun–Thu full; `mealFactor` per-meal (Sunday full, Fri/Sat all meals ‎-25%, Sat
+  evening = 0.5 × 0.75); `mealDiners` reduced weekend references (Fri breakfast &
+  Fri cooked dinner = round(0.75×full), Sat self-serve dinner = round(0.75×evening));
+  effectivePeople/par expectations updated for the new factor. Browser smoke checks
+  Sunday breakfast = full, Friday breakfast & dinner = round(0.75×full).
+
 ### Changed — realistic prices, meal model, weekend factor, par rescale & baking allocation
 
 A single pass rebasing the kitchen's quantity/cost math on how the houses

@@ -112,6 +112,10 @@ const state = {
   countMode: false,     // stock-count (ספירת מלאי) mode toggle
   countDate: null,      // ISO date of the count being taken
   countValues: {},      // transient qty edits in count mode, keyed by stock id
+  dataLoaded: false,    // has the initial full load finished? (loading ≠ zero)
+  // "כל הבתים" overview: a light, refreshable per-month summary fed by the
+  // batched `loadOverview` endpoint (falls back to local compute on error).
+  overview: { month: null, rows: null, loading: false, error: '' },
 };
 
 function activeHouse() {
@@ -416,6 +420,8 @@ function render() {
   applyHouseTheme();
   renderChrome();
   const screen = $('#screen');
+  // Initial load in flight: a clean loading state, never an empty/zero screen.
+  if (!state.dataLoaded) { screen.innerHTML = loadingState(); return; }
   if (state.tab === 'admin') { screen.innerHTML = renderAdmin(); return; }
   const house = activeHouse();
   if (!house) {
@@ -426,6 +432,18 @@ function render() {
   const map = { menu: renderMenu, headcount: renderHeadcount, stock: renderStock, baseline: renderBaseline, plan: renderPlan, shopping: renderShopping, budget: renderBudget };
   const fn = map[state.tab] || renderMenu;
   screen.innerHTML = fn(house);
+}
+
+/* Full-screen loading placeholder shown until the initial load resolves — a
+   spinner + "טוען…", never a zeroed table masquerading as data. */
+function loadingState() {
+  return `<div class="card loading-card" role="status" aria-live="polite">
+    <div class="spinner" aria-hidden="true"></div>
+    <p class="muted">טוען נתונים…</p>
+    <div class="skeleton skeleton-line"></div>
+    <div class="skeleton skeleton-line"></div>
+    <div class="skeleton skeleton-line short"></div>
+  </div>`;
 }
 
 function emptyState(icon, title, hint) {
@@ -523,9 +541,9 @@ function renderMenu(house) {
 
   // Per-meal diner REFERENCE (never scales the cook's quantities): cooked meals
   // (בוקר/צהריים + Friday dinner) run at the full count; self-serve evenings show
-  // מטופלים + 2. Base figures — a per-day headcount override still shows on the
+  // מטופלים + 2. Friday + Saturday are the reduced-occupancy weekend, so their
+  // reference is 75% (rounded). A per-day headcount override still shows on the
   // day pill below.
-  const meal2 = KD.mealHeadcount(house.headcount);
   const cols = KD.DAYS.map((day) => {
     const people = KD.effectiveForDay(house.headcount, day).total;
     const isToday = thisWeek && day === today;
@@ -538,8 +556,8 @@ function renderMenu(house) {
       const open = !!state.mealOpen[mealKey(day, meal)];
       // Self-serve = every ערב EXCEPT Friday (Shabbat dinner is cooked). Sat lunch
       // and all breakfasts/lunches stay cooked/planned.
-      const selfServe = meal === 'dinner' && day !== 'friday';
-      const diners = meal === 'dinner' ? meal2.evening : meal2.full;
+      const selfServe = KD.isSelfServeMeal(day, meal);
+      const diners = KD.mealDiners(house.headcount, day, meal);
       const names = dishes.map((dd) => String(dd.name || '').trim()).filter(Boolean);
       const summary = selfServe && !names.length ? SELF_SERVE_NOTE : (names.length ? names.join(' · ') : '—');
       const dishHtml = dishes.map((dish) => renderDish(day, meal, dish)).join('');
@@ -713,11 +731,11 @@ function renderHeadcount(house) {
     const ov = (hc.overrides && hc.overrides[day]) || {};
     const eff = KD.effectiveForDay(hc, day);
     const has = ov.patients != null || ov.staff != null;
-    return `<tr>
+    return `<tr data-hc-day="${day}">
       <td>${esc(KD.DAY_LABELS_HE[day])}</td>
       <td><input type="number" min="0" placeholder="${hc.basePatients}" value="${ov.patients != null ? ov.patients : ''}" data-act="ovP" data-day="${day}" style="width:70px" /></td>
       <td><input type="number" min="0" placeholder="${hc.baseStaff}" value="${ov.staff != null ? ov.staff : ''}" data-act="ovS" data-day="${day}" style="width:70px" /></td>
-      <td class="num"><strong>${eff.total}</strong>${has ? ' <span class="tag">חריגה</span>' : ''}</td>
+      <td class="num"><strong class="hc-eff-total">${eff.total}</strong>${has ? ' <span class="tag">חריגה</span>' : ''}</td>
       <td>${has ? `<button class="danger" data-act="ovClear" data-day="${day}">נקה</button>` : ''}</td>
     </tr>`;
   }).join('');
@@ -911,7 +929,7 @@ function renderBaseline(house) {
     <div class="baseline-head">
       <div class="screen-title">
         <h2 class="baseline-title">הכמות הבסיסית לבית לחודש — קובעת את התקציב</h2>
-        <span class="muted">מחושב לפי <strong>${effDiners}</strong> סועדים אפקטיביים (ערבים עצמאיים, שישי-שבת ‎-25%; ייחוס: ${KD.BASE_PEOPLE}). ערכי ברירת המחדל ניתנים לעריכה — עריכה נשמרת כערך <strong>ידני</strong> ומודגשת.</span>
+        <span class="muted">מחושב לפי <strong>${effDiners}</strong> סועדים אפקטיביים (ערבים עצמאיים, שישי בבוקר עד ראשון בבוקר ‎-25%; ייחוס: ${KD.BASE_PEOPLE}). ערכי ברירת המחדל ניתנים לעריכה — עריכה נשמרת כערך <strong>ידני</strong> ומודגשת.</span>
       </div>
       <div class="head-actions no-print">
         <button data-act="parResetAll" ${hasOverrides ? '' : 'disabled'} title="הסר את כל הערכים הידניים בבית זה">↺ אפס הכל לברירת מחדל</button>
@@ -970,7 +988,7 @@ function setParOverride(house, key, field, rawValue) {
 function baselineText(house) {
   const effDiners = Math.round(KD.effectivePeople(house.headcount));
   const b = KD.baselineForHouse(state.catalog, KD.effectivePeople(house.headcount), house.parOverrides || {});
-  const lines = ['🧮 כמויות בסיס לחודש – ' + house.name, 'מחושב לפי ' + effDiners + ' סועדים אפקטיביים (ערבים עצמאיים, שישי-שבת ‎-25%)', ''];
+  const lines = ['🧮 כמויות בסיס לחודש – ' + house.name, 'מחושב לפי ' + effDiners + ' סועדים אפקטיביים (ערבים עצמאיים, שישי בבוקר עד ראשון בבוקר ‎-25%)', ''];
   for (const c of KD.CATEGORIES) {
     const rows = b.rows.filter((r) => r.category === c && r.monthlyCost > 0);
     if (!rows.length) continue;
@@ -1249,45 +1267,137 @@ function updateBudgetTiles(house) {
 }
 
 /* --------------------------- Admin view --------------------------- */
+/* A house has an unsaved (debounced) edit in flight — its local, optimistic
+   figures must win over any value the backend echoes back, so a just-edited
+   number never briefly reverts to the stale server value on refresh. */
+function hasPendingSave(houseId) {
+  return Object.keys(saveTimers).some((k) => k.split(':')[1] === houseId);
+}
+
+/* Overview data source, in priority order:
+   1. batched `state.overview.rows` for the current month (from loadOverview) —
+      but a house with a pending local save keeps its optimistic LOCAL row;
+   2. a local compute from already-loaded state (instant, real numbers), so we
+   NEVER print ₪0 as a stand-in for "loading". True loading (nothing to show yet)
+   renders skeleton rows instead. */
+function overviewRowsFor(month) {
+  const ov = state.overview;
+  const localBy = {};
+  if (state.dataLoaded) state.houses.forEach((h) => { localBy[h.id] = KD.houseMonthRaw(h, month); });
+  if (ov.rows && ov.month === month) {
+    return ov.rows.map((r) => (hasPendingSave(r.id) && localBy[r.id]) ? localBy[r.id] : r);
+  }
+  if (state.dataLoaded && state.houses.length) return state.houses.map((h) => localBy[h.id]);
+  return null; // nothing to show yet → caller renders skeletons
+}
+
+/* Fetch the month's overview from the light batched endpoint. Optimistic: the
+   table keeps showing whatever it already has (real local numbers) while this
+   runs; a stale token guards against out-of-order responses; on failure we fall
+   back to the local compute rather than blanking the screen. */
+let _overviewToken = 0;
+async function refreshOverview(month) {
+  month = KD.normMonth(month || state.currentMonth);
+  const token = ++_overviewToken;
+  state.overview.loading = true;
+  state.overview.month = month;
+  if (state.tab === 'admin') render();
+  try {
+    const d = await api('loadOverview', { month });
+    if (token !== _overviewToken) return; // a newer refresh superseded this one
+    // Sanitise at the trust boundary: coerce every numeric field (so a bad
+    // backend value can never poison the math or render as markup).
+    const numOr0 = (v) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : 0; };
+    state.overview.rows = (Array.isArray(d.houses) ? d.houses : []).map((r) => ({
+      id: String((r && r.id) || ''),
+      name: String((r && r.name) || ''),
+      month: KD.normMonth(r && r.month) || month,
+      budget: numOr0(r && r.budget),
+      overrun: numOr0(r && r.overrun),
+      actual: numOr0(r && r.actual),
+      diners: Math.floor(numOr0(r && r.diners)),
+    }));
+    state.overview.error = '';
+  } catch (err) {
+    if (token !== _overviewToken) return;
+    state.overview.rows = state.houses.map((h) => KD.houseMonthRaw(h, month));
+    state.overview.error = 'לא ניתן לרענן מהשרת — מוצג לפי הנתונים המקומיים';
+  } finally {
+    if (token === _overviewToken) {
+      state.overview.loading = false;
+      if (state.tab === 'admin') render();
+    }
+  }
+}
+
+/* Skeleton placeholder rows — shown while the overview is loading and there is
+   nothing real to display yet. Never renders ₪0 as a loading value. */
+function overviewSkeletonRows(n) {
+  let out = '';
+  for (let i = 0; i < n; i++) {
+    out += `<tr class="skeleton-row" aria-hidden="true">
+      <td><span class="skeleton skeleton-text"></span></td>
+      <td class="num"><span class="skeleton skeleton-pill"></span></td>
+      <td class="num"><span class="skeleton skeleton-pill"></span></td>
+      <td class="num"><span class="skeleton skeleton-pill"></span></td>
+      <td class="num"><span class="skeleton skeleton-pill"></span></td>
+      <td></td></tr>`;
+  }
+  return out;
+}
+
 function renderAdmin() {
   const month = state.currentMonth;
+  const raws = overviewRowsFor(month);
+  const loadingFirst = state.overview.loading && !raws; // loading, nothing to show yet
+
+  // Only a genuinely-empty, fully-loaded account shows the empty state.
+  if (!loadingFirst && state.dataLoaded && !state.houses.length && !(raws && raws.length)) {
+    return emptyState('🏠', 'אין בתים עדיין', 'הוסיפו בית מתפריט הבתים כדי להתחיל.');
+  }
+
   let tB = 0, tA = 0;
-  const rows = state.houses.map((house) => {
-    const b = budgetForMonth(house, month);
-    const actual = KD.actualSpendForMonth(house.purchases, month);
-    const s = KD.summariseBudget(b.budget, actual, b.overrun);
-    const people = KD.baseTotal(house.headcount);
-    tB += s.budget + s.overrun; tA += s.actual;
-    return `<tr>
-      <td><strong>${esc(house.name)}</strong><div class="muted mono" style="font-size:.7rem">${esc(house.id)}</div></td>
-      <td class="num">${people}</td>
+  let body;
+  if (loadingFirst) {
+    body = overviewSkeletonRows(state.houses.length || 5);
+  } else {
+    body = (raws || []).map((raw) => {
+      const s = KD.summariseBudget(raw.budget, raw.actual, raw.overrun);
+      tB += s.budget + s.overrun; tA += s.actual;
+      return `<tr>
+      <td><strong>${esc(raw.name)}</strong><div class="muted mono" style="font-size:.7rem">${esc(raw.id)}</div></td>
+      <td class="num">${raw.diners}</td>
       <td class="num">${fmtCurrency(s.budget)}</td>
       <td class="num">${fmtCurrency(s.actual)}</td>
       <td class="num ${s.overBudget ? 'over' : 'under'}">${fmtCurrency(s.remaining)}</td>
-      <td><button class="ghost" data-act="openHouse" data-id="${esc(house.id)}">פתח</button></td>
+      <td><button class="ghost" data-act="openHouse" data-id="${esc(raw.id)}">פתח</button></td>
     </tr>`;
-  }).join('');
-
-  if (!state.houses.length) {
-    return emptyState('🏠', 'אין בתים עדיין', 'הוסיפו בית מתפריט הבתים כדי להתחיל.');
+    }).join('');
   }
+
   const totalRemaining = KD.roundQty(tB - tA, 2);
+  const refreshing = state.overview.loading;
+  const foot = loadingFirst ? '' : `<tfoot><tr><td><strong>סה"כ</strong></td><td></td>
+        <td class="num"><strong>${fmtCurrency(tB)}</strong></td>
+        <td class="num"><strong>${fmtCurrency(tA)}</strong></td>
+        <td class="num ${tA > tB ? 'over' : 'under'}"><strong>${fmtCurrency(totalRemaining)}</strong></td>
+        <td></td></tr></tfoot>`;
   return `<div class="card">
-    <h2>מבט על — כל הבתים</h2>
+    <div class="row between">
+      <h2 style="margin:0">מבט על — כל הבתים</h2>
+      <button class="ghost" data-act="refreshOverview" ${refreshing ? 'disabled' : ''} title="רענון מהשרת">${refreshing ? '⏳ מרענן…' : '↻ רענן'}</button>
+    </div>
     <div class="month-bar">
       <button class="icon-btn" data-act="monthPrev" aria-label="חודש קודם">→</button>
       <strong>${esc(KD.formatMonthHe(month))}</strong>
       <button class="icon-btn" data-act="monthNext" aria-label="חודש הבא">←</button>
     </div>
-    <p class="muted">תקציב חודשי והוצאה בפועל לכל בית.</p>
+    <p class="muted">תקציב חודשי והוצאה בפועל לכל בית.${loadingFirst ? ' <span class="loading-note">טוען…</span>' : ''}</p>
+    ${state.overview.error ? `<p class="muted err-note">${esc(state.overview.error)}</p>` : ''}
     <table>
       <thead><tr><th>בית</th><th>סועדים (בסיס)</th><th>תקציב</th><th>בפועל</th><th>מול תקציב</th><th></th></tr></thead>
-      <tbody>${rows}</tbody>
-      <tfoot><tr><td><strong>סה"כ</strong></td><td></td>
-        <td class="num"><strong>${fmtCurrency(tB)}</strong></td>
-        <td class="num"><strong>${fmtCurrency(tA)}</strong></td>
-        <td class="num ${tA > tB ? 'over' : 'under'}"><strong>${fmtCurrency(totalRemaining)}</strong></td>
-        <td></td></tr></tfoot>
+      <tbody>${body}</tbody>
+      ${foot}
     </table>
   </div>`;
 }
@@ -1325,9 +1435,9 @@ function onInput(e) {
       persist.menu(house, state.currentWeekOf);
       break;
     }
-    case 'baseP': house.headcount.basePatients = clampInt(t.value); updateBaseTotal(house); persist.headcount(house); break;
-    case 'baseS': house.headcount.baseStaff = clampInt(t.value); updateBaseTotal(house); persist.headcount(house); break;
-    case 'ovP': case 'ovS': setOverride(house, t.dataset.day, act === 'ovP' ? 'patients' : 'staff', t.value); persist.headcount(house); break;
+    case 'baseP': house.headcount.basePatients = clampInt(t.value); updateBaseTotal(house); persist.headcount(house); scheduleHeadcountRerender(); break;
+    case 'baseS': house.headcount.baseStaff = clampInt(t.value); updateBaseTotal(house); persist.headcount(house); scheduleHeadcountRerender(); break;
+    case 'ovP': case 'ovS': setOverride(house, t.dataset.day, act === 'ovP' ? 'patients' : 'staff', t.value); updateOverrideRow(house, t.dataset.day); persist.headcount(house); scheduleHeadcountRerender(); break;
     case 'algName': { const a = house.allergies.find((x) => x.id === t.dataset.id); if (a) { a.name = t.value; persist.allergies(house); } break; }
     case 'algCount': { const a = house.allergies.find((x) => x.id === t.dataset.id); if (a) { a.count = clampInt(t.value); persist.allergies(house); } break; }
     case 'stkName': { const s = house.stock.find((x) => x.id === t.dataset.id); if (s) { s.name = t.value; persist.stock(house); } break; }
@@ -1376,13 +1486,50 @@ function reformatMoney(input) {
   try { input.setSelectionRange(end, end); } catch { /* number inputs disallow it */ }
 }
 
-/* Live update of the "סה"כ בסיס" figure without a full re-render (which would
-   drop focus from the input being typed into). */
+/* Live update of the "סה"כ בסיס" figure + the read-only meal-occupancy line
+   without a full re-render (which would drop focus from the input being typed
+   into). Runs on every keystroke for instant feedback. */
 function updateBaseTotal(house) {
   const el = document.getElementById('baseTotal');
   if (el) el.textContent = KD.baseTotal(house.headcount);
   const meal = document.getElementById('mealOccupancy');
   if (meal) meal.innerHTML = mealOccupancyLine(house.headcount);
+}
+
+/* Optimistic per-row update for a daily-override edit: recompute that day's
+   סה"כ אפקטיבי locally and paint it INSTANTLY (no network wait, no reload). The
+   debounced re-render below then refreshes the חריגה tag / נקה button. */
+function updateOverrideRow(house, day) {
+  const row = document.querySelector(`tr[data-hc-day="${day}"]`);
+  if (!row) return;
+  const cell = row.querySelector('.hc-eff-total');
+  if (cell) cell.textContent = KD.effectiveForDay(house.headcount, day).total;
+}
+
+/* Debounced full re-render of the תפוסה tab after a headcount edit, so the
+   daily-override effective totals (and any other in-tab figure derived from the
+   base) reflect the new numbers live — no page reload. Dependent tabs already
+   render from current state when switched to, so this only fires while the user
+   stays on תפוסה. Focus + caret are restored to the field being edited so typing
+   is uninterrupted. */
+let _hcRerenderTimer = null;
+function scheduleHeadcountRerender() {
+  if (_hcRerenderTimer) clearTimeout(_hcRerenderTimer);
+  _hcRerenderTimer = setTimeout(() => {
+    _hcRerenderTimer = null;
+    if (state.tab !== 'headcount') return; // switching tabs re-renders from state
+    const a = document.activeElement;
+    const focus = (a && a.dataset && a.dataset.act)
+      ? { act: a.dataset.act, day: a.dataset.day || '', id: a.dataset.id || '' } : null;
+    render();
+    if (focus) {
+      let sel = 'input[data-act="' + focus.act + '"]';
+      if (focus.day) sel += '[data-day="' + focus.day + '"]';
+      if (focus.id) sel += '[data-id="' + focus.id + '"]';
+      const el = document.querySelector(sel);
+      if (el) { el.focus(); try { const n = String(el.value).length; el.setSelectionRange(n, n); } catch (_) { /* number inputs reject setSelectionRange */ } }
+    }
+  }, 300);
 }
 
 function onChange(e) {
@@ -1468,7 +1615,14 @@ async function onClick(e) {
   if (!btn) return;
   const house = activeHouse();
 
-  if (btn.dataset.tab) { state.tab = btn.dataset.tab; render(); return; }
+  if (btn.dataset.tab) {
+    state.tab = btn.dataset.tab;
+    render();
+    // Auto-refresh the overview from the light endpoint on entry (freshness),
+    // showing what we have meanwhile — never a blank/zero wait.
+    if (state.tab === 'admin') refreshOverview(state.currentMonth);
+    return;
+  }
   // Tapping a qty field (count + stock) opens the common-values picker.
   if (btn.tagName === 'INPUT' && btn.dataset.picker) { openQtyPicker(btn); return; }
   const act = btn.dataset.act;
@@ -1477,8 +1631,9 @@ async function onClick(e) {
   switch (act) {
     case 'weekPrev': state.currentWeekOf = KD.shiftWeek(state.currentWeekOf, -1); render(); break;
     case 'weekNext': state.currentWeekOf = KD.shiftWeek(state.currentWeekOf, 1); render(); break;
-    case 'monthPrev': state.currentMonth = KD.shiftMonth(state.currentMonth, -1); render(); break;
-    case 'monthNext': state.currentMonth = KD.shiftMonth(state.currentMonth, 1); render(); break;
+    case 'monthPrev': state.currentMonth = KD.shiftMonth(state.currentMonth, -1); render(); if (state.tab === 'admin') refreshOverview(state.currentMonth); break;
+    case 'monthNext': state.currentMonth = KD.shiftMonth(state.currentMonth, 1); render(); if (state.tab === 'admin') refreshOverview(state.currentMonth); break;
+    case 'refreshOverview': refreshOverview(state.currentMonth); break;
     case 'planScope': state.planFromToday = d.scope === 'today'; render(); break;
     case 'toggleMeal': { const k = mealKey(d.day, d.meal); state.mealOpen[k] = !state.mealOpen[k]; render(); break; }
     case 'copyLast': {
@@ -1683,10 +1838,13 @@ function wireChrome() {
 async function start() {
   try {
     setStatus('טוען נתונים…');
+    render(); // paint the loading state immediately (skeletons, never ₪0)
     await loadState();
+    state.dataLoaded = true;
     setStatus('');
     render();
   } catch (err) {
+    state.dataLoaded = true; // reveal whatever loaded; stop showing skeletons
     setStatus('שגיאה בטעינה: ' + err.message);
     render();
   }
